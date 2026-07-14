@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { shutdownChrome, withPage } from './core/connect.js'
 import { extract } from './core/extract.js'
-import { buildTree, renderTree, selectorOf, walk, type LayoutNode } from './core/tree.js'
+import { buildTree, findNode, renderTree } from './core/tree.js'
 import { checkInvariants } from './core/invariants.js'
 import { explain, renderExplanation } from './core/explain.js'
 import { inspect } from './core/inspect.js'
@@ -59,15 +59,8 @@ async function main(): Promise<number> {
       case 'layout': {
         const tree = buildTree(await extract(client))
         checkInvariants(tree) // populate inline ⚠ warnings
-        let from: LayoutNode | undefined
-        if (f.selector) {
-          walk(tree.root, (n) => {
-            if (from) return
-            if (selectorOf(n) === f.selector || n.id === f.selector.replace('#', '') ||
-                n.classes.includes(f.selector.replace('.', ''))) from = n
-          })
-          if (!from) throw new Error(`No element matching '${f.selector}' in the layout tree.`)
-        }
+        const from = f.selector ? findNode(tree, f.selector) : undefined
+        if (f.selector && !from) throw new Error(`No element matching '${f.selector}' in the layout tree.`)
         return renderTree(tree, { depth: f.depth ? Number(f.depth) : undefined, from })
       }
       case 'inspect': return inspect(client, f.selector)

@@ -100,6 +100,18 @@ export function selectorOf(n: LayoutNode): string {
   return n.tag + (n.id ? `#${n.id}` : '') + n.classes.slice(0, 3).map((c) => `.${c}`).join('')
 }
 
+// First-match lookup by rendered selector, #id, or .class — shared by the CLI's
+// and MCP's layout-scoping (--selector / selector param).
+export function findNode(tree: BuiltTree, selector: string): LayoutNode | undefined {
+  let found: LayoutNode | undefined
+  walk(tree.root, (n) => {
+    if (found) return
+    if (selectorOf(n) === selector || n.id === selector.replace('#', '') ||
+        n.classes.includes(selector.replace('.', ''))) found = n
+  })
+  return found
+}
+
 const px = (v: string) => String(Math.round(parseFloat(v)) || 0)
 
 function fourSide(styles: Record<string, string>, prefix: string): string | null {
