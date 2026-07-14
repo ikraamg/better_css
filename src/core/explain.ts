@@ -78,7 +78,9 @@ export async function explain(client: any, selector: string, property: string): 
 
   matchedCSSRules.forEach((m: any, order: number) => {
     if (m.rule.origin !== 'regular') return // skip user-agent rules
-    let decl = m.rule.style.cssProperties.find((p: any) => p.name === property && !p.disabled && p.text)
+    // Within one rule the LAST declaration wins (common fallback pattern:
+    // width: 90%; width: calc(100% - 20px)) — hence .at(-1), not find().
+    let decl = m.rule.style.cssProperties.filter((p: any) => p.name === property && !p.disabled && p.text).at(-1)
     let via: string | undefined
     if (!decl) {
       // Longhand derived from a shorthand: CDP lists it as a bare {name, value}
@@ -88,9 +90,11 @@ export async function explain(client: any, selector: string, property: string): 
       const derived = m.rule.style.cssProperties.find((p: any) => p.name === property && !p.text)
       if (!derived) return
       const withText = m.rule.style.cssProperties.filter((p: any) => p.text && !p.disabled)
-      const shorthand = withText.find((p: any) => p.longhandProperties?.some((l: any) => l.name === property))
+      // Last matching shorthand wins here too (border: ...; border-color: ...).
+      // The fallback's ascending stable sort puts longest-then-latest at the end.
+      const shorthand = withText.filter((p: any) => p.longhandProperties?.some((l: any) => l.name === property)).at(-1)
         ?? withText.filter((p: any) => property.startsWith(p.name))
-          .sort((a: any, b: any) => b.name.length - a.name.length)[0]
+          .sort((a: any, b: any) => a.name.length - b.name.length).at(-1)
       if (!shorthand) return
       via = `${shorthand.name}: ${shorthand.value.replace(/\s*!important/, '')}`
       decl = { ...derived, important: shorthand.important, range: shorthand.range }

@@ -1,2 +1,4 @@
 .grid { display: grid; grid-template-columns: 240px 1fr; }
 .grid > div { max-width: 240px; }
+.other { width: 111px; width: 222px; }
+.sidebar { border: 1px solid red; border-color: blue; }

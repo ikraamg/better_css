@@ -39,6 +39,19 @@ test('shorthand-derived longhand traces to the shorthand declaration', async () 
   expect(renderExplanation(e)).toContain('margin-top: 4px (via margin: 4px 8px)')
 })
 
+test('last duplicate declaration within a rule wins', async () => {
+  const e = await withPage(`${srv.url}/cascade/index.html`, (c) => explain(c, '.other', 'width'))
+  const winner = e.entries.find((x) => x.status === 'winner')!
+  expect(winner.value).toBe('222px')
+  expect(e.layoutNote).toBeNull() // computed matches the real winner
+})
+
+test('via cites the last shorthand declared in the rule', async () => {
+  const e = await withPage(`${srv.url}/cascade/index.html`, (c) => explain(c, '.sidebar', 'border-top-color'))
+  const winner = e.entries.find((x) => x.status === 'winner')!
+  expect(winner.via).toContain('border-color')
+})
+
 test('second explain on the same client still resolves file:line', async () => {
   const second = await withPage(`${srv.url}/cascade/index.html`, async (c) => {
     await explain(c, '.sidebar', 'width')
