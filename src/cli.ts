@@ -8,7 +8,7 @@ import { inspect } from './core/inspect.js'
 import { diffTrees, loadSnapshot, renderDiff, saveSnapshot } from './core/snapshot.js'
 
 const USAGE = `bettercss <command> <url> [options]
-  layout    <url> [--selector S] [--depth N]   print the LayoutTree
+  layout    <url> [--selector S] [--depth N]   print the LayoutTree (budgeted to 400 lines unless --depth is given)
   inspect   <url> --selector S                 deep-dive one element
   explain   <url> --selector S --property P    trace a property to its source rule
   check     <url>                              run invariants (exit 1 on violations)
@@ -66,7 +66,8 @@ async function main(): Promise<number> {
         checkInvariants(tree) // populate inline ⚠ warnings
         const from = f.selector ? findNode(tree, f.selector) : undefined
         if (f.selector && !from) throw new Error(`No element matching '${f.selector}' in the layout tree.`)
-        return renderTree(tree, { depth: f.depth ? Number(f.depth) : undefined, from })
+        const depth = f.depth ? Number(f.depth) : undefined
+        return renderTree(tree, { depth, from, budget: depth === undefined ? 400 : undefined })
       }
       case 'inspect': return inspect(client, f.selector)
       case 'explain': return renderExplanation(await explain(client, f.selector, f.property))

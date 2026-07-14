@@ -180,10 +180,48 @@ function renderNode(n: LayoutNode, depth: number, maxDepth: number, out: string[
   }
 }
 
-export function renderTree(tree: BuiltTree, opts: { depth?: number; from?: LayoutNode } = {}): string {
+function countNodes(root: LayoutNode): number {
+  let n = 0
+  walk(root, () => { n++ })
+  return n
+}
+
+function deepestLevel(root: LayoutNode): number {
+  let max = 0
+  const rec = (n: LayoutNode, d: number): void => {
+    if (d > max) max = d
+    for (const c of n.children) rec(c, d + 1)
+  }
+  rec(root, 0)
+  return max
+}
+
+// budget is a line-count cap for the `layout` command/tool only — check/snapshot/diff
+// never pass it, so snapshots stay full-fidelity (a truncated snapshot would corrupt
+// every later diff against it). Explicit depth always wins over budget (contract #2).
+export function renderTree(tree: BuiltTree, opts: { depth?: number; from?: LayoutNode; budget?: number } = {}): string {
   const root = opts.from ?? tree.root
-  const out: string[] = []
-  renderNode(root, 0, opts.depth ?? Infinity, out)
+  const renderAt = (depth: number): string[] => {
+    const out: string[] = []
+    renderNode(root, 0, depth, out)
+    return out
+  }
+
+  let out = renderAt(opts.depth ?? Infinity)
+  if (opts.depth === undefined && opts.budget !== undefined && out.length > opts.budget) {
+    // binary search the deepest depth whose render still fits (budget - 1 lines,
+    // reserving one line for the truncation note). Line count is monotonic
+    // non-decreasing in depth, so binary search is safe.
+    let lo = 0, hi = deepestLevel(root), best = 0
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1
+      if (renderAt(mid).length <= opts.budget - 1) { best = mid; lo = mid + 1 }
+      else hi = mid - 1
+    }
+    out = renderAt(best)
+    out.push(`… truncated to depth ${best} (${countNodes(root)} elements total) — pass depth or selector to expand`)
+  }
+
   if (root === tree.root && tree.contentWidth > tree.viewport.width) {
     out[0] += ` ⚠H-OVERFLOW:+${tree.contentWidth - tree.viewport.width}px`
   }

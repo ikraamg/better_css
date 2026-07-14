@@ -63,3 +63,28 @@ test('depth option truncates', async () => {
   expect(shallow.split('\n').length).toBeLessThan(full.split('\n').length)
   expect(shallow).toContain('…')
 })
+
+test('budget truncates a deep tree to fit and appends one note line', async () => {
+  const full = await render('/deep/index.html')
+  expect(full.split('\n').length).toBeGreaterThan(400)
+  const budgeted = await withPage(`${srv.url}/deep/index.html`, async (c) =>
+    renderTree(buildTree(await extract(c)), { budget: 400 }))
+  const lines = budgeted.split('\n')
+  expect(lines.length).toBeLessThanOrEqual(400)
+  expect(lines[lines.length - 1])
+    .toMatch(/^… truncated to depth \d+ \(\d+ elements total\) — pass depth or selector to expand$/)
+})
+
+test('explicit depth wins over budget — no truncation note', async () => {
+  const text = await withPage(`${srv.url}/deep/index.html`, async (c) =>
+    renderTree(buildTree(await extract(c)), { depth: 2, budget: 1 }))
+  expect(text).not.toContain('truncated to depth')
+  expect(text.split('\n').length).toBe(4)
+})
+
+test('basic fixture renders byte-identical with and without the default budget', async () => {
+  const withoutBudget = await render('/basic/index.html')
+  const withBudget = await withPage(`${srv.url}/basic/index.html`, async (c) =>
+    renderTree(buildTree(await extract(c)), { budget: 400 }))
+  expect(withBudget).toBe(withoutBudget)
+})

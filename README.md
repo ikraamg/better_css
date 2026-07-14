@@ -33,7 +33,7 @@ absolute `dir` argument, or register the server per-project in that project's
 ## CLI (CI / scripts)
 
     npx bettercss check http://localhost:3000            # invariants, exit 1 on violations
-    npx bettercss layout http://localhost:3000           # the layout tree
+    npx bettercss layout http://localhost:3000           # the layout tree (budgeted to 400 lines unless --depth is given)
     npx bettercss explain http://localhost:3000 --selector .sidebar --property width
     npx bettercss snapshot http://localhost:3000 --name home
     npx bettercss diff http://localhost:3000 --name home

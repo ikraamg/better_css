@@ -29,14 +29,14 @@ function page(
   }, { port: opts.port, viewport: opts.viewport ? parseViewport(opts.viewport) : undefined })
 }
 
-server.tool('layout', 'Compact deterministic layout tree of the rendered page: positions, sizes, layout modes, inline ⚠ warnings. THE ground-truth view — read this before and after CSS changes.',
-  { url, port, viewport, selector: z.string().optional().describe('Scope to this element'), depth: z.number().optional().describe('Max tree depth') },
+server.tool('layout', 'Compact deterministic layout tree of the rendered page: positions, sizes, layout modes, inline ⚠ warnings. THE ground-truth view — read this before and after CSS changes. Budgeted to 400 lines by default (auto-truncated to the deepest depth that fits, with a note); pass depth to see the full tree from the root, or selector to scope to a subtree.',
+  { url, port, viewport, selector: z.string().optional().describe('Scope to this element'), depth: z.number().optional().describe('Max tree depth (disables the default 400-line budget)') },
   ({ url: u, port: p, viewport: v, selector, depth }) => page(u, { port: p, viewport: v }, async (client) => {
     const tree = buildTree(await extract(client))
     checkInvariants(tree)
     const from = selector ? findNode(tree, selector) : undefined
     if (selector && !from) return `No element matching '${selector}' in the layout tree. Run layout without a selector to see what exists.`
-    return renderTree(tree, { depth, from })
+    return renderTree(tree, { depth, from, budget: depth === undefined ? 400 : undefined })
   }))
 
 server.tool('inspect', 'Deep-dive ONE element: box model, every non-default computed style, stacking context, and why it has its width/height.',
