@@ -30,6 +30,7 @@ const sheetCache = new WeakMap<object, Map<string, SheetInfo>>()
 
 // keyed by resolved absolute map URL, so identical sourceMappingURLs across
 // sheets (or repeat explain() calls) fetch/parse once
+// NOTE: transient fetch failures cache null for the process lifetime (mirrors sheetCache)
 const mapCache = new Map<string, SourceMap | null>()
 
 async function loadMap(sheetURL: string, mapURL: string): Promise<SourceMap | null> {

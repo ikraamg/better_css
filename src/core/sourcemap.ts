@@ -10,6 +10,7 @@ function decodeVLQ(str: string, pos: { i: number }): number {
   let result = 0, shift = 0
   while (true) {
     const digit = B64.indexOf(str[pos.i++])
+    if (digit === -1) throw new Error('malformed VLQ') // invalid char or past end-of-string
     result += (digit & 31) << shift
     if ((digit & 32) === 0) break
     shift += 5
