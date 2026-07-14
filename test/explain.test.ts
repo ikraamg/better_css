@@ -2,6 +2,8 @@ import { afterAll, expect, test } from 'vitest'
 import { serveFixtures } from './helpers/server.js'
 import { withPage, shutdownChrome } from '../src/core/connect.js'
 import { explain, renderExplanation } from '../src/core/explain.js'
+import { extract } from '../src/core/extract.js'
+import { buildTree, walk } from '../src/core/tree.js'
 
 const srv = await serveFixtures('fixtures')
 afterAll(async () => { srv.close(); await shutdownChrome() })
@@ -74,4 +76,21 @@ test('color properties never get a layout-constraints note (serialization mismat
 test('unknown selector throws with suggestions', async () => {
   await expect(withPage(`${srv.url}/cascade/index.html`, (c) => explain(c, '.sidbar', 'width')))
     .rejects.toThrow(/No element matches '\.sidbar'/)
+})
+
+test('explain resolves a node by backendNodeId, bypassing selector escaping entirely', async () => {
+  const winner = await withPage(`${srv.url}/tailwindish/index.html`, async (c) => {
+    const tree = buildTree(await extract(c))
+    let target: any
+    walk(tree.root, (n) => { if (n.classes.some((cl) => cl.startsWith('w-[')) && !target) target = n })
+    const e = await explain(c, { backendNodeId: target.backendNodeId }, 'width')
+    return e.entries.find((x) => x.status === 'winner')
+  })
+  expect(winner?.value).toBe('300px')
+  expect(winner?.file).toContain('tailwindish')
+})
+
+test('a stale backendNodeId throws a clear error', async () => {
+  await expect(withPage(`${srv.url}/tailwindish/index.html`, (c) => explain(c, { backendNodeId: 999999999 }, 'width')))
+    .rejects.toThrow(/backendNodeId/)
 })

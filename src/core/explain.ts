@@ -85,6 +85,18 @@ export async function resolveNode(client: any, selector: string): Promise<number
   throw new Error(`No element matches '${selector}'. Selectors on this page include: ${result.value}`)
 }
 
+// backendNodeIds survive selectors that DOM.querySelector can't parse (Tailwind's
+// arbitrary-value classes and variant colons aren't valid CSS token syntax).
+// pushNodesByBackendIdsToFrontend requires DOM.getDocument to have been called on
+// the session first — verified empirically, it otherwise throws "Document needs to
+// be requested first". A nodeId of 0 means the backend node no longer exists.
+async function resolveBackendNode(client: any, backendNodeId: number): Promise<number> {
+  await client.DOM.getDocument({ depth: -1 })
+  const { nodeIds } = await client.DOM.pushNodesByBackendIdsToFrontend({ backendNodeIds: [backendNodeId] })
+  if (!nodeIds[0]) throw new Error(`backendNodeId ${backendNodeId} no longer exists in the document (stale)`)
+  return nodeIds[0]
+}
+
 const spec = (s: any) => (s?.specificity ? `(${s.specificity.a},${s.specificity.b},${s.specificity.c})` : '(?)')
 const specRank = (s: any) => (s?.specificity ? s.specificity.a * 1e6 + s.specificity.b * 1e3 + s.specificity.c : 0)
 
@@ -99,9 +111,17 @@ function layoutRelevant(property: string, declared: string, computed: string): b
   return bothPxLengths || GEOMETRY_PROPERTY.test(property)
 }
 
-export async function explain(client: any, selector: string, property: string): Promise<Explanation> {
+export async function explain(
+  client: any,
+  target: string | { backendNodeId: number },
+  property: string,
+  context?: string,
+): Promise<Explanation> {
   const sheets = await collectSheets(client)
-  const nodeId = await resolveNode(client, selector)
+  const nodeId = typeof target === 'string' ? await resolveNode(client, target) : await resolveBackendNode(client, target.backendNodeId)
+  // display-only: reuse the caller's display string when given one (e.g. renderViolations
+  // already computed selectorOf(n)); a bare backendNodeId is a fine fallback otherwise.
+  const selector = typeof target === 'string' ? target : (context ?? `[backendNodeId ${target.backendNodeId}]`)
 
   const { computedStyle } = await client.CSS.getComputedStyleForNode({ nodeId })
   const computed = computedStyle.find((p: any) => p.name === property)?.value ?? '(none)'

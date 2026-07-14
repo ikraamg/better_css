@@ -3,7 +3,7 @@ import { serveFixtures } from './helpers/server.js'
 import { withPage, shutdownChrome } from '../src/core/connect.js'
 import { extract } from '../src/core/extract.js'
 import { buildTree, renderTree } from '../src/core/tree.js'
-import { checkInvariants } from '../src/core/invariants.js'
+import { checkInvariants, renderViolations } from '../src/core/invariants.js'
 
 const srv = await serveFixtures('fixtures')
 afterAll(async () => { srv.close(); await shutdownChrome() })
@@ -48,4 +48,13 @@ test('zero-size: flags invisible interactive element, honors ignore attr', async
 test('clean page has no violations', async () => {
   const { violations } = await violationsFor('/basic/index.html')
   expect(violations).toEqual([])
+})
+
+test('parent-bleed: suspect line resolves via backendNodeId when the selector is unescapable', async () => {
+  const text = await withPage(`${srv.url}/tailwindish/index.html`, async (c) => {
+    const tree = buildTree(await extract(c))
+    return renderViolations(c, checkInvariants(tree))
+  })
+  expect(text).toContain('parent-bleed')
+  expect(text).toMatch(/suspect: width: 300px/)
 })

@@ -183,7 +183,7 @@ export async function renderViolations(client: any, violations: Violation[]): Pr
   for (const v of violations) {
     lines.push(`${v.rule}: ${v.message}`)
     if (SUSPECT_RULES.has(v.rule)) {
-      const e = await explain(client, v.selector, 'width').catch(() => null)
+      const e = await explain(client, { backendNodeId: v.backendNodeId }, 'width', v.selector).catch(() => null)
       const w = e?.entries.find((x) => x.status === 'winner')
       if (w) lines.push(`  suspect: width: ${w.value} @ ${w.file.split('/').pop()}:${w.line}`)
     }
