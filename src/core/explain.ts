@@ -7,6 +7,7 @@ export interface CascadeEntry {
   line: number
   status: 'winner' | 'overridden'
   reason: string | null
+  via?: string // set when the value comes from a shorthand, e.g. 'margin: 4px 8px'
 }
 
 export interface Explanation {
@@ -20,8 +21,16 @@ export interface Explanation {
 
 interface SheetInfo { sourceURL: string; startLine: number; sourceMapURL: string | null }
 
+// NOTE: CSS.enable only backfills styleSheetAdded on the disabled→enabled
+// transition, so the map must be cached per client — a second collectSheets
+// on the same connection would otherwise come back empty.
+const sheetCache = new WeakMap<object, Map<string, SheetInfo>>()
+
 async function collectSheets(client: any): Promise<Map<string, SheetInfo>> {
+  const cached = sheetCache.get(client)
+  if (cached) return cached
   const sheets = new Map<string, SheetInfo>()
+  sheetCache.set(client, sheets)
   client.CSS.styleSheetAdded(({ header }: any) => {
     sheets.set(header.styleSheetId, {
       sourceURL: header.sourceURL || '<style>',
@@ -69,8 +78,23 @@ export async function explain(client: any, selector: string, property: string): 
 
   matchedCSSRules.forEach((m: any, order: number) => {
     if (m.rule.origin !== 'regular') return // skip user-agent rules
-    const decl = m.rule.style.cssProperties.find((p: any) => p.name === property && !p.disabled && p.text)
-    if (!decl) return
+    let decl = m.rule.style.cssProperties.find((p: any) => p.name === property && !p.disabled && p.text)
+    let via: string | undefined
+    if (!decl) {
+      // Longhand derived from a shorthand: CDP lists it as a bare {name, value}
+      // entry (no .text/.range). Attribute it to its shorthand declaration —
+      // the shorthand's longhandProperties links them exactly; fall back to the
+      // longest name-prefix match for payloads without that field.
+      const derived = m.rule.style.cssProperties.find((p: any) => p.name === property && !p.text)
+      if (!derived) return
+      const withText = m.rule.style.cssProperties.filter((p: any) => p.text && !p.disabled)
+      const shorthand = withText.find((p: any) => p.longhandProperties?.some((l: any) => l.name === property))
+        ?? withText.filter((p: any) => property.startsWith(p.name))
+          .sort((a: any, b: any) => b.name.length - a.name.length)[0]
+      if (!shorthand) return
+      via = `${shorthand.name}: ${shorthand.value.replace(/\s*!important/, '')}`
+      decl = { ...derived, important: shorthand.important, range: shorthand.range }
+    }
     const matched = m.rule.selectorList.selectors[m.matchingSelectors[0]]
     const info = sheets.get(m.rule.styleSheetId)
     const range = decl.range ?? m.rule.style.range
@@ -83,6 +107,7 @@ export async function explain(client: any, selector: string, property: string): 
       line: (info?.startLine ?? 0) + (range?.startLine ?? 0) + 1,
       status: 'overridden',
       reason: null,
+      via,
       order,
       rank: specRank(matched),
     })
@@ -125,7 +150,8 @@ export function renderExplanation(e: Explanation): string {
     const mark = x.status === 'winner' ? '✓' : '✗'
     const src = x.file === '(inline)' ? '(inline style)' : `${x.file.split('/').pop()}:${x.line}`
     const note = x.status === 'winner' ? (e.layoutNote ? ` — ${e.layoutNote}` : '') : ` — ${x.reason}`
-    lines.push(`  ${mark} ${e.property}: ${x.value}${x.important ? ' !important' : ''}   ${src} (${x.selector} ${x.specificity})${note}`)
+    const via = x.via ? ` (via ${x.via})` : ''
+    lines.push(`  ${mark} ${e.property}: ${x.value}${x.important ? ' !important' : ''}${via}   ${src} (${x.selector} ${x.specificity})${note}`)
   }
   if (e.entries.length === 0) lines.push(`  (no author rule sets ${e.property}; value is inherited or the default)`)
   return lines.join('\n')

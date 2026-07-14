@@ -29,6 +29,26 @@ test('renderExplanation produces the ✓/✗ block', async () => {
   expect(text).toMatch(/✗ width: 100%\s+.*reset\.css:1/)
 })
 
+test('shorthand-derived longhand traces to the shorthand declaration', async () => {
+  const e = await withPage(`${srv.url}/cascade/index.html`, (c) => explain(c, '.sidebar', 'margin-top'))
+  const winner = e.entries.find((x) => x.status === 'winner')!
+  expect(winner.value).toBe('4px')
+  expect(winner.file).toContain('sidebar.css')
+  expect(winner.line).toBe(2)
+  expect(winner.via).toContain('margin:')
+  expect(renderExplanation(e)).toContain('margin-top: 4px (via margin: 4px 8px)')
+})
+
+test('second explain on the same client still resolves file:line', async () => {
+  const second = await withPage(`${srv.url}/cascade/index.html`, async (c) => {
+    await explain(c, '.sidebar', 'width')
+    return explain(c, '.sidebar', 'width')
+  })
+  const winner = second.entries.find((x) => x.status === 'winner')!
+  expect(winner.file).toContain('sidebar.css')
+  expect(winner.line).toBe(1)
+})
+
 test('unknown selector throws with suggestions', async () => {
   await expect(withPage(`${srv.url}/cascade/index.html`, (c) => explain(c, '.sidbar', 'width')))
     .rejects.toThrow(/No element matches '\.sidbar'/)
