@@ -35,8 +35,17 @@ export function buildTree(raw: RawSnapshot): BuiltTree {
   const byIndex = new Map<number, LayoutNode>()
   let body: LayoutNode | null = null
 
+  // DOMSnapshot reports ::marker/::before/::after as their own DOM-node rows with a
+  // layout box (RareStringData: sparse `index[]` of node indices that have a pseudoType,
+  // aligned with `value[]`). They aren't real elements — treating them as LayoutNodes
+  // fires parent-bleed on ordinary UA styling (e.g. a plain <ul><li> marker sits outside
+  // the LI's padding box by design). Skip them; their absence from byIndex also makes the
+  // ancestor-walk below fall through to the real parent for anything nested under one.
+  const pseudoIndices = new Set<number>(nodes.pseudoType?.index ?? [])
+
   const count = nodes.parentIndex.length
   for (let i = 0; i < count; i++) {
+    if (pseudoIndices.has(i)) continue
     const row = layoutRow.get(i)
     const type = nodes.nodeType[i]
     const name = s(nodes.nodeName[i]).toLowerCase()

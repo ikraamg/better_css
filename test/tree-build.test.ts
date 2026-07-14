@@ -44,3 +44,10 @@ test('selectorOf formats tag#id.classes', async () => {
   const header = root.children[0]
   expect(selectorOf(header)).toBe('header#top')
 })
+
+test('pseudo-elements (::marker, ::before, ::after) never become LayoutNodes', async () => {
+  const { root } = await built('/basic/index.html')
+  let sawPseudo = false
+  walk(root, (n) => { if (n.tag.startsWith('::')) sawPseudo = true })
+  expect(sawPseudo).toBe(false)
+})
