@@ -24,18 +24,25 @@ test('viewport-overflow: names the culprit and the amount', async () => {
 })
 
 test('parent-bleed: flags static child exceeding parent, not scroll containers', async () => {
-  const { violations } = await violationsFor('/bleed/index.html')
+  const { violations, tree } = await violationsFor('/bleed/index.html')
   const bleeds = violations.filter((v) => v.rule === 'parent-bleed')
-  expect(bleeds).toHaveLength(1)
+  // borderless parent + bordered parent; the ignored wrapper's child is skipped
+  expect(bleeds).toHaveLength(2)
   expect(bleeds[0].selector).toBe('div.child')
   expect(bleeds[0].message).toContain('100px') // 300 - 200
+  expect(bleeds[1].message).toContain('104px') // right edge 302 - padding-box right 198
+  expect(renderTree(tree)).toContain('⚠BLEED:+100px')
 })
 
 test('zero-size: flags invisible interactive element, honors ignore attr', async () => {
-  const { violations } = await violationsFor('/zero-size/index.html')
+  const { violations, tree } = await violationsFor('/zero-size/index.html')
   const zeros = violations.filter((v) => v.rule === 'zero-size')
+  // the opacity:0-wrapped button and the ignored button are both skipped
   expect(zeros).toHaveLength(1)
   expect(zeros[0].selector).toBe('button')
+  expect(renderTree(tree)).toContain('⚠ZERO-SIZE')
+  // page overflow comes only from an ignored element -> suppressed, no body fallback
+  expect(violations.filter((v) => v.rule === 'viewport-overflow')).toEqual([])
 })
 
 test('clean page has no violations', async () => {

@@ -9,39 +9,56 @@ export interface Violation {
 
 const INTERACTIVE = new Set(['a', 'button', 'input', 'select', 'textarea', 'summary'])
 
-const ignored = (n: LayoutNode) => 'data-bettercss-ignore' in n.attrs
-const visible = (n: LayoutNode) =>
-  n.styles['visibility'] !== 'hidden' && parseFloat(n.styles['opacity'] ?? '1') > 0
+interface Ctx {
+  ignored(n: LayoutNode): boolean
+  visible(n: LayoutNode): boolean
+}
+
+function buildCtx(tree: BuiltTree): Ctx {
+  const ignoredSet = new WeakSet<LayoutNode>()
+  const opacityHidden = new WeakSet<LayoutNode>()
+  walk(tree.root, (n, parent) => {
+    if ('data-bettercss-ignore' in n.attrs || (parent && ignoredSet.has(parent))) ignoredSet.add(n)
+    if (parseFloat(n.styles['opacity'] ?? '1') <= 0 || (parent && opacityHidden.has(parent))) opacityHidden.add(n)
+  })
+  return {
+    ignored: (n) => ignoredSet.has(n),
+    // visibility inherits in computed style; opacity does not, so propagate it down ourselves
+    visible: (n) => n.styles['visibility'] !== 'hidden' && !opacityHidden.has(n),
+  }
+}
 
 function report(out: Violation[], n: LayoutNode, rule: Violation['rule'], message: string, warning: string): void {
   out.push({ rule, selector: selectorOf(n), message, backendNodeId: n.backendNodeId })
   n.warnings.push(warning)
 }
 
-function viewportOverflow(tree: BuiltTree, out: Violation[]): void {
+function viewportOverflow(tree: BuiltTree, out: Violation[], ctx: Ctx): void {
   const over = tree.contentWidth - tree.viewport.width
   if (over <= 0) return
   // culprit: deepest visible node extending furthest past the viewport edge
   let culprit: LayoutNode | null = null
   walk(tree.root, (n) => {
-    if (ignored(n) || !visible(n)) return
+    if (ctx.ignored(n) || !ctx.visible(n)) return
     if (n.box.x + n.box.w > tree.viewport.width) {
       if (!culprit || n.box.x + n.box.w >= culprit.box.x + culprit.box.w) culprit = n
     }
   })
-  const c = culprit ?? tree.root
+  const c = culprit as LayoutNode | null // TS can't see assignment inside the walk closure
+  if (!c) return // only ignored/hidden elements overflow -> suppressed
   report(out, c, 'viewport-overflow',
     `page overflows viewport horizontally by ${over}px; widest element is ${selectorOf(c)} (right edge ${c.box.x + c.box.w}px > ${tree.viewport.width}px)`,
     `H-OVERFLOW:+${over}px`)
 }
 
-function parentBleed(tree: BuiltTree, out: Violation[]): void {
+function parentBleed(tree: BuiltTree, out: Violation[], ctx: Ctx): void {
   walk(tree.root, (n, parent) => {
-    if (!parent || ignored(n) || !visible(n)) return
+    if (!parent || ctx.ignored(n) || !ctx.visible(n)) return
     const pos = n.styles['position']
     if (pos === 'absolute' || pos === 'fixed') return // positioned children escape on purpose
     const scrolls = ['auto', 'scroll', 'hidden', 'clip'].includes(parent.styles['overflow-x'] ?? '')
     if (scrolls) return // parent manages its own overflow
+    // bleed boundary is the parent's padding box, per spec
     const padBox = {
       left: parent.box.x + Math.round(parseFloat(parent.styles['border-left-width'] ?? '0')),
       right: parent.box.x + parent.box.w - Math.round(parseFloat(parent.styles['border-right-width'] ?? '0')),
@@ -57,9 +74,9 @@ function parentBleed(tree: BuiltTree, out: Violation[]): void {
   })
 }
 
-function zeroSize(tree: BuiltTree, out: Violation[]): void {
+function zeroSize(tree: BuiltTree, out: Violation[], ctx: Ctx): void {
   walk(tree.root, (n) => {
-    if (ignored(n) || !visible(n) || !INTERACTIVE.has(n.tag)) return
+    if (ctx.ignored(n) || !ctx.visible(n) || !INTERACTIVE.has(n.tag)) return
     if (n.box.w === 0 || n.box.h === 0) {
       report(out, n, 'zero-size', `interactive ${selectorOf(n)} has zero size (${n.box.w}x${n.box.h})`, 'ZERO-SIZE')
     } else if (n.box.x + n.box.w < 0 || n.box.y + n.box.h < 0 ||
@@ -69,10 +86,11 @@ function zeroSize(tree: BuiltTree, out: Violation[]): void {
   })
 }
 
-const CHECKS: Array<(tree: BuiltTree, out: Violation[]) => void> = [viewportOverflow, parentBleed, zeroSize]
+const CHECKS: Array<(tree: BuiltTree, out: Violation[], ctx: Ctx) => void> = [viewportOverflow, parentBleed, zeroSize]
 
 export function checkInvariants(tree: BuiltTree): Violation[] {
   const out: Violation[] = []
-  for (const check of CHECKS) check(tree, out)
+  const ctx = buildCtx(tree)
+  for (const check of CHECKS) check(tree, out, ctx)
   return out
 }
