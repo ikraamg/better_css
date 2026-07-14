@@ -1,0 +1,2 @@
+.grid { display: grid; grid-template-columns: 240px 1fr; }
+.grid > div { max-width: 240px; }

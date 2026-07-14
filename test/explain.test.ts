@@ -1,0 +1,35 @@
+import { afterAll, expect, test } from 'vitest'
+import { serveFixtures } from './helpers/server.js'
+import { withPage, shutdownChrome } from '../src/core/connect.js'
+import { explain, renderExplanation } from '../src/core/explain.js'
+
+const srv = await serveFixtures('fixtures')
+afterAll(async () => { srv.close(); await shutdownChrome() })
+
+test('traces winner with file:line, losers with reasons', async () => {
+  const e = await withPage(`${srv.url}/cascade/index.html`, (c) => explain(c, '.sidebar', 'width'))
+  expect(e.computed).toBe('240px')
+  const winner = e.entries.find((x) => x.status === 'winner')!
+  expect(winner.value).toBe('300px')
+  expect(winner.file).toContain('sidebar.css')
+  expect(winner.line).toBe(1)
+  const loser = e.entries.find((x) => x.status === 'overridden')!
+  expect(loser.value).toBe('100%')
+  expect(loser.file).toContain('reset.css')
+  expect(loser.reason).toContain('specificity')
+  // declared 300px but computed 240px → layout constraint note
+  expect(e.layoutNote).toContain('grid')
+})
+
+test('renderExplanation produces the ✓/✗ block', async () => {
+  const e = await withPage(`${srv.url}/cascade/index.html`, (c) => explain(c, '.sidebar', 'width'))
+  const text = renderExplanation(e)
+  expect(text).toContain('.sidebar width = 240px')
+  expect(text).toMatch(/✓ width: 300px\s+.*sidebar\.css:1/)
+  expect(text).toMatch(/✗ width: 100%\s+.*reset\.css:1/)
+})
+
+test('unknown selector throws with suggestions', async () => {
+  await expect(withPage(`${srv.url}/cascade/index.html`, (c) => explain(c, '.sidbar', 'width')))
+    .rejects.toThrow(/No element matches '\.sidbar'/)
+})
