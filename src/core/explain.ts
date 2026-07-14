@@ -91,7 +91,7 @@ export async function resolveNode(client: any, selector: string): Promise<number
 // the session first — verified empirically, it otherwise throws "Document needs to
 // be requested first". A nodeId of 0 means the backend node no longer exists.
 async function resolveBackendNode(client: any, backendNodeId: number): Promise<number> {
-  await client.DOM.getDocument({ depth: -1 })
+  await client.DOM.getDocument({ depth: 0 })
   const { nodeIds } = await client.DOM.pushNodesByBackendIdsToFrontend({ backendNodeIds: [backendNodeId] })
   if (!nodeIds[0]) throw new Error(`backendNodeId ${backendNodeId} no longer exists in the document (stale)`)
   return nodeIds[0]

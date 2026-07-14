@@ -52,27 +52,55 @@ function viewportOverflow(tree: BuiltTree, out: Violation[], ctx: Ctx): void {
     `H-OVERFLOW:+${over}px`)
 }
 
+const CLIPS_X = new Set(['auto', 'scroll', 'hidden', 'clip'])
+
+// bleed boundary is a node's padding box, per spec
+function padBoxOf(n: LayoutNode): { left: number; right: number } {
+  return {
+    left: n.box.x + Math.round(parseFloat(n.styles['border-left-width'] ?? '0')),
+    right: n.box.x + n.box.w - Math.round(parseFloat(n.styles['border-right-width'] ?? '0')),
+  }
+}
+
+// `ancestors` is root..direct-parent (nearest last). A child only visibly bleeds past
+// its direct parent up to the nearest clipping ancestor above it (or the parent itself,
+// same as before) — an ancestor further up (e.g. body { overflow-x: hidden }) that never
+// actually clips this child must not suppress a real bleed.
+function checkBleed(n: LayoutNode, ancestors: LayoutNode[], out: Violation[]): void {
+  const parent = ancestors[ancestors.length - 1]
+  const padBox = padBoxOf(parent)
+  let clip: LayoutNode | null = null
+  for (let i = ancestors.length - 1; i >= 0; i--) {
+    if (CLIPS_X.has(ancestors[i].styles['overflow-x'] ?? '')) { clip = ancestors[i]; break }
+  }
+  let visRight = n.box.x + n.box.w
+  let visLeft = n.box.x
+  if (clip) {
+    const clipBox = padBoxOf(clip)
+    visRight = Math.min(visRight, clipBox.right)
+    visLeft = Math.max(visLeft, clipBox.left)
+  }
+  const over = Math.max(visRight - padBox.right, padBox.left - visLeft)
+  if (over > 1) {
+    report(out, n, 'parent-bleed',
+      `${selectorOf(n)} bleeds ${over}px outside ${selectorOf(parent)} (child ${n.box.w}px wide, parent ${parent.box.w}px)`,
+      `BLEED:+${over}px`)
+  }
+}
+
 function parentBleed(tree: BuiltTree, out: Violation[], ctx: Ctx): void {
-  walk(tree.root, (n, parent) => {
-    if (!parent || ctx.ignored(n) || !ctx.visible(n)) return
-    const pos = n.styles['position']
-    if (pos === 'absolute' || pos === 'fixed') return // positioned children escape on purpose
-    const scrolls = ['auto', 'scroll', 'hidden', 'clip'].includes(parent.styles['overflow-x'] ?? '')
-    if (scrolls) return // parent manages its own overflow
-    // bleed boundary is the parent's padding box, per spec
-    const padBox = {
-      left: parent.box.x + Math.round(parseFloat(parent.styles['border-left-width'] ?? '0')),
-      right: parent.box.x + parent.box.w - Math.round(parseFloat(parent.styles['border-right-width'] ?? '0')),
+  const ancestors: LayoutNode[] = []
+  const visit = (n: LayoutNode) => {
+    const parent = ancestors[ancestors.length - 1]
+    if (parent && !ctx.ignored(n) && ctx.visible(n)) {
+      const pos = n.styles['position']
+      if (pos !== 'absolute' && pos !== 'fixed') checkBleed(n, ancestors, out) // positioned children escape on purpose
     }
-    const overRight = n.box.x + n.box.w - padBox.right
-    const overLeft = padBox.left - n.box.x
-    const over = Math.max(overRight, overLeft)
-    if (over > 1) {
-      report(out, n, 'parent-bleed',
-        `${selectorOf(n)} bleeds ${over}px outside ${selectorOf(parent)} (child ${n.box.w}px wide, parent ${parent.box.w}px)`,
-        `BLEED:+${over}px`)
-    }
-  })
+    ancestors.push(n)
+    for (const c of n.children) visit(c)
+    ancestors.pop()
+  }
+  visit(tree.root)
 }
 
 function zeroSize(tree: BuiltTree, out: Violation[], ctx: Ctx): void {
@@ -175,15 +203,31 @@ export function checkInvariants(tree: BuiltTree): Violation[] {
 // browser overrode — worth naming the source rule for.
 const SUSPECT_RULES = new Set<Violation['rule']>(['viewport-overflow', 'parent-bleed', 'text-clip'])
 
+function pxRange(group: Violation[]): string {
+  const pxs = group.map((v) => v.message.match(/(\d+)px/)?.[1]).filter((x): x is string => x !== undefined).map(Number)
+  return pxs.length ? `${Math.min(...pxs)}–${Math.max(...pxs)}px` : `${group.length} elements`
+}
+
 // Renders violations for CLI/MCP output, appending a `suspect:` line naming the
 // winning width declaration (file:line) for rules where that's usually the cause.
+// Identical violations (same rule + selector, e.g. every card in a carousel) collapse
+// into one line — the raw Violation[] from checkInvariants stays ungrouped.
 export async function renderViolations(client: any, violations: Violation[]): Promise<string> {
   if (!violations.length) return 'no violations'
-  const lines: string[] = []
+  const groups = new Map<string, Violation[]>()
   for (const v of violations) {
-    lines.push(`${v.rule}: ${v.message}`)
-    if (SUSPECT_RULES.has(v.rule)) {
-      const e = await explain(client, { backendNodeId: v.backendNodeId }, 'width', v.selector).catch(() => null)
+    const key = `${v.rule} ${v.selector}`
+    const group = groups.get(key)
+    if (group) group.push(v)
+    else groups.set(key, [v])
+  }
+  const lines: string[] = []
+  for (const group of groups.values()) {
+    const first = group[0]
+    const suffix = group.length > 1 ? ` (×${group.length}, ${pxRange(group)})` : ''
+    lines.push(`${first.rule}: ${first.message}${suffix}`)
+    if (SUSPECT_RULES.has(first.rule)) {
+      const e = await explain(client, { backendNodeId: first.backendNodeId }, 'width', first.selector).catch(() => null)
       const w = e?.entries.find((x) => x.status === 'winner')
       if (w) lines.push(`  suspect: width: ${w.value} @ ${w.file.split('/').pop()}:${w.line}`)
     }
