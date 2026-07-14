@@ -88,6 +88,17 @@ export async function resolveNode(client: any, selector: string): Promise<number
 const spec = (s: any) => (s?.specificity ? `(${s.specificity.a},${s.specificity.b},${s.specificity.c})` : '(?)')
 const specRank = (s: any) => (s?.specificity ? s.specificity.a * 1e6 + s.specificity.b * 1e3 + s.specificity.c : 0)
 
+const PX_LENGTH = /^-?[\d.]+px$/
+const GEOMETRY_PROPERTY = /^(width|height|inset|margin|padding)(-|$)/
+
+// declared !== computed is common for non-geometry properties purely from serialization
+// (color: red -> rgb(255, 0, 0)); a "layout constraints override" note is only true —
+// and only useful — for actual box-model properties.
+function layoutRelevant(property: string, declared: string, computed: string): boolean {
+  const bothPxLengths = PX_LENGTH.test(declared.trim()) && PX_LENGTH.test(computed.trim())
+  return bothPxLengths || GEOMETRY_PROPERTY.test(property)
+}
+
 export async function explain(client: any, selector: string, property: string): Promise<Explanation> {
   const sheets = await collectSheets(client)
   const nodeId = await resolveNode(client, selector)
@@ -180,7 +191,7 @@ export async function explain(client: any, selector: string, property: string): 
   })
 
   const declaredWinner = entries[0]?.value ?? null
-  const layoutNote = declaredWinner !== null && declaredWinner !== computed
+  const layoutNote = declaredWinner !== null && declaredWinner !== computed && layoutRelevant(property, declaredWinner, computed)
     ? `computed ${computed} differs from declared ${declaredWinner} — layout constraints override (parent grid/flex track sizing, min/max, or stretch)`
     : null
 

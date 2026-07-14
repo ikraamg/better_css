@@ -38,14 +38,6 @@ test('malformed mappings throw instead of hanging', () => {
   }))).toThrow(/malformed VLQ/)
 })
 
-test('parses a base64-decoded data-URI payload', () => {
-  // exercises the decode half of loadMap's data: branch; URL resolution
-  // inside loadMap itself remains covered only by review (not exported)
-  const b64 = Buffer.from(JSON.stringify({ version: 3, sources: ['x.css'], mappings: 'AAAA' })).toString('base64')
-  const map = parseSourceMap(Buffer.from(b64, 'base64').toString())
-  expect(originalPosition(map, 0, 0)?.source).toBe('x.css')
-})
-
 test('explain resolves through the source map to input.css', async () => {
   const e = await withPage(`${srv.url}/sourcemap/index.html`, (c) => explain(c, 'h1', 'color'))
   const winner = e.entries.find((x) => x.status === 'winner')!

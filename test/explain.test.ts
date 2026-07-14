@@ -62,6 +62,15 @@ test('second explain on the same client still resolves file:line', async () => {
   expect(winner.line).toBe(1)
 })
 
+test('color properties never get a layout-constraints note (serialization mismatch, not layout)', async () => {
+  // declared 'blue' (via border-color) vs computed 'rgb(0, 0, 255)' — same color,
+  // different serialization. Not a layout constraint.
+  const e = await withPage(`${srv.url}/cascade/index.html`, (c) => explain(c, '.sidebar', 'border-top-color'))
+  expect(e.declaredWinner).toBe('blue')
+  expect(e.computed).toBe('rgb(0, 0, 255)')
+  expect(e.layoutNote).toBeNull()
+})
+
 test('unknown selector throws with suggestions', async () => {
   await expect(withPage(`${srv.url}/cascade/index.html`, (c) => explain(c, '.sidbar', 'width')))
     .rejects.toThrow(/No element matches '\.sidbar'/)
