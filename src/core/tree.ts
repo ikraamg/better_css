@@ -99,3 +99,72 @@ export function walk(node: LayoutNode, fn: (n: LayoutNode, parent: LayoutNode | 
 export function selectorOf(n: LayoutNode): string {
   return n.tag + (n.id ? `#${n.id}` : '') + n.classes.slice(0, 3).map((c) => `.${c}`).join('')
 }
+
+const px = (v: string) => String(Math.round(parseFloat(v)) || 0)
+
+function fourSide(styles: Record<string, string>, prefix: string): string | null {
+  const [t, r, b, l] = ['top', 'right', 'bottom', 'left'].map((s) => px(styles[`${prefix}-${s}`] ?? '0'))
+  if (t === '0' && r === '0' && b === '0' && l === '0') return null
+  if (t === b && l === r) return t === l ? t : `${t},${l}`
+  return `${t},${r},${b},${l}`
+}
+
+function layoutDesc(n: LayoutNode): string {
+  const parts: string[] = []
+  const d = n.styles['display'] ?? ''
+  if (d.includes('flex')) {
+    parts.push(`flex ${(n.styles['flex-direction'] ?? 'row').startsWith('column') ? 'column' : 'row'}`)
+    const gap = px((n.styles['gap'] ?? '0').split(' ')[0])
+    if (gap !== '0') parts.push(`gap:${gap}`)
+  } else if (d.includes('grid')) {
+    const cols = (n.styles['grid-template-columns'] ?? 'none')
+      .split(' ').map((c) => (c.endsWith('px') ? px(c) : c)).join(',')
+    parts.push(cols === 'none' ? 'grid' : `grid cols:${cols}`)
+    const gap = px((n.styles['gap'] ?? '0').split(' ')[0])
+    if (gap !== '0') parts.push(`gap:${gap}`)
+  }
+  const pad = fourSide(n.styles, 'padding')
+  if (pad) parts.push(`pad:${pad}`)
+  const pos = n.styles['position']
+  if (pos && pos !== 'static') parts.push(pos + (n.styles['z-index'] !== 'auto' ? ` z:${n.styles['z-index']}` : ''))
+  return parts.length ? ' ' + parts.join(' ') : ''
+}
+
+function sameShape(a: LayoutNode, b: LayoutNode): boolean {
+  return selectorOf(a) === selectorOf(b) &&
+    Math.abs(a.box.w - b.box.w) <= 2 && Math.abs(a.box.h - b.box.h) <= 2 &&
+    a.warnings.length === 0 && b.warnings.length === 0
+}
+
+function renderNode(n: LayoutNode, depth: number, maxDepth: number, out: string[]): void {
+  const indent = '  '.repeat(depth)
+  const warn = n.warnings.map((w) => ` ⚠${w}`).join('')
+  out.push(`${indent}${selectorOf(n)} (${n.box.x},${n.box.y} ${n.box.w}x${n.box.h})${layoutDesc(n)}${warn}`)
+  if (depth >= maxDepth) {
+    if (n.children.length) out.push(`${indent}  … ${n.children.length} children`)
+    return
+  }
+  // collapse runs of same-shaped siblings
+  for (let i = 0; i < n.children.length; ) {
+    let j = i + 1
+    while (j < n.children.length && sameShape(n.children[i], n.children[j])) j++
+    const run = j - i
+    if (run >= 2) {
+      const c = n.children[i]
+      out.push(`${'  '.repeat(depth + 1)}${selectorOf(c)} ×${run} (~${c.box.w}x${c.box.h})`)
+    } else {
+      renderNode(n.children[i], depth + 1, maxDepth, out)
+    }
+    i = j
+  }
+}
+
+export function renderTree(tree: BuiltTree, opts: { depth?: number; from?: LayoutNode } = {}): string {
+  const root = opts.from ?? tree.root
+  const out: string[] = []
+  renderNode(root, 0, opts.depth ?? Infinity, out)
+  if (root === tree.root && tree.contentWidth > tree.viewport.width) {
+    out[0] += ` ⚠H-OVERFLOW:+${tree.contentWidth - tree.viewport.width}px`
+  }
+  return out.join('\n')
+}
