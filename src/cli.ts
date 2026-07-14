@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { shutdownChrome, withPage } from './core/connect.js'
 import { extract } from './core/extract.js'
-import { buildTree, renderTree } from './core/tree.js'
+import { buildTree, renderTree, selectorOf, walk, type LayoutNode } from './core/tree.js'
 import { checkInvariants } from './core/invariants.js'
 import { explain, renderExplanation } from './core/explain.js'
 import { inspect } from './core/inspect.js'
@@ -35,14 +35,20 @@ const REQUIRED: Record<string, string[]> = {
 async function main(): Promise<number> {
   const [cmd, url] = process.argv.slice(2)
   const f = flags(process.argv.slice(4))
-  if (!cmd || !url) { console.log(USAGE); return 2 }
+  if (!cmd || !url) { console.error(USAGE); return 2 }
   if (!['layout', 'inspect', 'explain', 'check', 'snapshot', 'diff'].includes(cmd)) {
-    console.log(USAGE)
+    console.error(USAGE)
     return 2
   }
   for (const name of REQUIRED[cmd] ?? []) {
     if (!f[name]) {
       console.error(`${cmd} requires --${name}\n\n${USAGE}`)
+      return 2
+    }
+  }
+  for (const name of ['depth', 'port']) {
+    if (f[name] !== undefined && Number.isNaN(Number(f[name]))) {
+      console.error(`--${name} must be a number, got '${f[name]}'`)
       return 2
     }
   }
@@ -53,7 +59,16 @@ async function main(): Promise<number> {
       case 'layout': {
         const tree = buildTree(await extract(client))
         checkInvariants(tree) // populate inline ⚠ warnings
-        return renderTree(tree, { depth: f.depth ? Number(f.depth) : undefined })
+        let from: LayoutNode | undefined
+        if (f.selector) {
+          walk(tree.root, (n) => {
+            if (from) return
+            if (selectorOf(n) === f.selector || n.id === f.selector.replace('#', '') ||
+                n.classes.includes(f.selector.replace('.', ''))) from = n
+          })
+          if (!from) throw new Error(`No element matching '${f.selector}' in the layout tree.`)
+        }
+        return renderTree(tree, { depth: f.depth ? Number(f.depth) : undefined, from })
       }
       case 'inspect': return inspect(client, f.selector)
       case 'explain': return renderExplanation(await explain(client, f.selector, f.property))

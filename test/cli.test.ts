@@ -15,6 +15,18 @@ test('layout prints the tree', async () => {
   expect(stdout).toContain('header#top (0,0 1280x64)')
 }, 60_000)
 
+test('layout --selector scopes to a subtree', async () => {
+  const { stdout } = await cli('layout', `${srv.url}/basic/index.html`, '--selector', 'main')
+  expect(stdout.split('\n')[0]).toMatch(/^main \(0,64/)
+  expect(stdout).not.toContain('header#top')
+}, 60_000)
+
+test('layout --selector with no match exits 2', async () => {
+  const err = await cli('layout', `${srv.url}/basic/index.html`, '--selector', '.nope').catch((e) => e)
+  expect(err.code).toBe(2)
+  expect(err.stderr).toContain("No element matching '.nope'")
+}, 60_000)
+
 test('check exits 1 with violations and names a suspect rule', async () => {
   const err = await cli('check', `${srv.url}/overflow-h/index.html`).catch((e) => e)
   expect(err.code).toBe(1)
