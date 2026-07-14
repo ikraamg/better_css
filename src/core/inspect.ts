@@ -1,26 +1,37 @@
 import { explain, renderExplanation, resolveNode } from './explain.js'
 
-const NON_DEFAULTS = `((sel) => {
+const PROBE = `((sel) => {
   const el = document.querySelector(sel)
   const probe = document.createElement(el.tagName)
   probe.style.display = 'none'
   document.body.appendChild(probe)
   const cs = getComputedStyle(el), ds = getComputedStyle(probe)
-  const out = {}
+  const diff = {}
+  // Geometry is covered authoritatively by the box-model line and the embedded
+  // width/height explanations; the display:none probe resolves these to auto,
+  // so diffing them only produces used-value noise ("width: 1040px" with no
+  // author rule). The non-default list is for styling.
+  const GEOM = /^(min-|max-)?(width|height|inline-size|block-size)$/
   for (const p of cs) {
-    if (p === 'display') { out[p] = cs.getPropertyValue(p); continue }
-    if (cs.getPropertyValue(p) !== ds.getPropertyValue(p)) out[p] = cs.getPropertyValue(p)
+    if (GEOM.test(p)) continue
+    if (p === 'display') { diff[p] = cs.getPropertyValue(p); continue }
+    if (cs.getPropertyValue(p) !== ds.getPropertyValue(p)) diff[p] = cs.getPropertyValue(p)
   }
   probe.remove()
-  return out
+  // real computed values (not the diff) for stacking-context detection —
+  // defaulted properties are absent from the diff, which is not the same as 'static'/'auto'
+  const actual = {}
+  for (const p of ['position', 'z-index', 'transform', 'opacity', 'isolation', 'filter'])
+    actual[p] = cs.getPropertyValue(p)
+  return { diff, actual }
 })`
 
-function stackingReason(styles: Record<string, string>): string | null {
-  if (styles['position'] !== 'static' && styles['z-index'] !== 'auto') return 'position + z-index'
-  if (styles['transform'] && styles['transform'] !== 'none') return 'transform'
-  if (parseFloat(styles['opacity'] ?? '1') < 1) return 'opacity < 1'
-  if (styles['isolation'] === 'isolate') return 'isolation: isolate'
-  if (styles['filter'] && styles['filter'] !== 'none') return 'filter'
+function stackingReason(s: Record<string, string>): string | null {
+  if (s['position'] !== 'static' && s['z-index'] !== 'auto') return 'position + z-index'
+  if (s['transform'] !== 'none') return 'transform'
+  if (parseFloat(s['opacity']) < 1) return 'opacity < 1'
+  if (s['isolation'] === 'isolate') return 'isolation: isolate'
+  if (s['filter'] !== 'none') return 'filter'
   return null
 }
 
@@ -44,9 +55,10 @@ export async function inspect(client: any, selector: string): Promise<string> {
   const nodeId = await resolveNode(client, selector)
 
   const { result } = await client.Runtime.evaluate({
-    expression: `${NON_DEFAULTS}(${JSON.stringify(selector)})`, returnByValue: true,
+    expression: `${PROBE}(${JSON.stringify(selector)})`, returnByValue: true,
   })
-  const styles: Record<string, string> = result.value ?? {}
+  const styles: Record<string, string> = result.value?.diff ?? {}
+  const actual: Record<string, string> = result.value?.actual ?? {}
 
   const { model } = await client.DOM.getBoxModel({ nodeId })
   const [pt, pr, pb, pl] = side(model.padding, model.content)
@@ -60,9 +72,9 @@ export async function inspect(client: any, selector: string): Promise<string> {
   const idAttr = id ? '#' + id : ''
   const clsAttr = cls ? '.' + cls.trim().split(/\s+/).join('.') : ''
 
-  const reason = stackingReason(styles)
+  const reason = stackingReason(actual)
   const lines = [
-    `${tag}${idAttr}${clsAttr}  ${Math.round(model.width)}x${Math.round(model.height)}`,
+    `${tag}${idAttr}${clsAttr}  ${Math.round(model.width)}x${Math.round(model.height)} (border-box)`,
     `  padding: ${pt} ${pr} ${pb} ${pl} | border: ${bt} ${br} ${bb} ${bl} | margin: ${mt} ${mr} ${mb} ${ml}`,
     `  stacking context: ${reason ? `yes (${reason})` : 'no'}`,
     '',
