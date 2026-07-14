@@ -36,9 +36,11 @@ test('explain tool traces cascade', async () => {
   expect((res.content as any)[0].text).toContain('✓ width: 300px')
 }, 60_000)
 
-test('check tool reports violations', async () => {
+test('check tool reports violations with a suspect rule', async () => {
   const res = await client.callTool({ name: 'check', arguments: { url: `${srv.url}/overflow-h/index.html` } })
-  expect((res.content as any)[0].text).toContain('viewport-overflow')
+  const text = (res.content as any)[0].text
+  expect(text).toContain('viewport-overflow')
+  expect(text).toMatch(/suspect: width: 1400px/)
 }, 60_000)
 
 test('shuts down its headless Chrome subprocess when the MCP session closes', async () => {

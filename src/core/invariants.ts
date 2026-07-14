@@ -1,3 +1,4 @@
+import { explain } from './explain.js'
 import { selectorOf, walk, type BuiltTree, type LayoutNode } from './tree.js'
 
 export interface Violation {
@@ -168,4 +169,24 @@ export function checkInvariants(tree: BuiltTree): Violation[] {
   const ctx = buildCtx(tree)
   for (const check of CHECKS) check(tree, out, ctx)
   return out
+}
+
+// Violations whose root cause is usually a width the author declared but the
+// browser overrode — worth naming the source rule for.
+const SUSPECT_RULES = new Set<Violation['rule']>(['viewport-overflow', 'parent-bleed', 'text-clip'])
+
+// Renders violations for CLI/MCP output, appending a `suspect:` line naming the
+// winning width declaration (file:line) for rules where that's usually the cause.
+export async function renderViolations(client: any, violations: Violation[]): Promise<string> {
+  if (!violations.length) return 'no violations'
+  const lines: string[] = []
+  for (const v of violations) {
+    lines.push(`${v.rule}: ${v.message}`)
+    if (SUSPECT_RULES.has(v.rule)) {
+      const e = await explain(client, v.selector, 'width').catch(() => null)
+      const w = e?.entries.find((x) => x.status === 'winner')
+      if (w) lines.push(`  suspect: width: ${w.value} @ ${w.file.split('/').pop()}:${w.line}`)
+    }
+  }
+  return lines.join('\n')
 }

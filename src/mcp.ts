@@ -5,7 +5,7 @@ import { z } from 'zod'
 import { pageWasBusy, shutdownChrome, withPage } from './core/connect.js'
 import { extract } from './core/extract.js'
 import { buildTree, findNode, renderTree } from './core/tree.js'
-import { checkInvariants } from './core/invariants.js'
+import { checkInvariants, renderViolations } from './core/invariants.js'
 import { explain, renderExplanation } from './core/explain.js'
 import { inspect } from './core/inspect.js'
 import { diffTrees, loadSnapshot, renderDiff, saveSnapshot } from './core/snapshot.js'
@@ -47,9 +47,7 @@ server.tool('check', 'Run layout invariants (overflow, bleed, clipped text, unin
   { url, port },
   ({ url: u, port: p }) => page(u, p, async (client) => {
     const violations = checkInvariants(buildTree(await extract(client)))
-    return violations.length
-      ? violations.map((v) => `${v.rule}: ${v.message}`).join('\n')
-      : 'no violations'
+    return renderViolations(client, violations)
   }))
 
 server.tool('snapshot', 'Lock the current layout as a named .tree snapshot for later diffing. Do this when the page looks CORRECT.',
