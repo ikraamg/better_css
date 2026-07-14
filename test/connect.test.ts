@@ -43,3 +43,9 @@ test('unreachable Chrome on explicit bad port gives actionable error', async () 
   await expect(withPage(`${srv.url}/basic/index.html`, async () => {}, { port: 59999 }))
     .rejects.toThrow(/remote-debugging-port/)
 })
+
+test('navigating to a dead server rejects instead of reporting the neterror page', async () => {
+  // nothing listens on port 1 (a reserved, always-refused TCP port)
+  await expect(withPage('http://127.0.0.1:1/', async () => {}))
+    .rejects.toThrow(/Failed to load/)
+})

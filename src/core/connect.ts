@@ -74,7 +74,8 @@ async function navigate(client: any, url: string): Promise<void> {
   Network.loadingFinished(() => { inflight--; check() })
   Network.loadingFailed(() => { inflight--; check() })
   const loaded = Page.loadEventFired()
-  await Page.navigate({ url })
+  const { errorText } = await Page.navigate({ url })
+  if (errorText) throw new Error(`Failed to load ${url}: ${errorText}`)
   // NOTE: arm the settle timer only after navigate is issued, so a slow-starting
   // main-document request can't let the idle promise resolve early and for good.
   check()
