@@ -1,0 +1,7 @@
+{
+  "version": 3,
+  "sources": ["input.css"],
+  "sourcesContent": ["/* original source file */\nbody { margin: 0; }\n\nh1 {\n  color: rgb(200, 0, 0);\n  font-size: 32px;\n}\n"],
+  "mappings": "AACA,KADA,OACe,CAAG,CAElB,GACE,MAAO,QACP,UAAW,IACb",
+  "names": []
+}

@@ -1,0 +1,7 @@
+/* original source file */
+body { margin: 0; }
+
+h1 {
+  color: rgb(200, 0, 0);
+  font-size: 32px;
+}

@@ -1,3 +1,5 @@
+import { originalPosition, parseSourceMap, type SourceMap } from './sourcemap.js'
+
 export interface CascadeEntry {
   value: string
   selector: string
@@ -25,6 +27,28 @@ interface SheetInfo { sourceURL: string; startLine: number; sourceMapURL: string
 // transition, so the map must be cached per client — a second collectSheets
 // on the same connection would otherwise come back empty.
 const sheetCache = new WeakMap<object, Map<string, SheetInfo>>()
+
+// keyed by resolved absolute map URL, so identical sourceMappingURLs across
+// sheets (or repeat explain() calls) fetch/parse once
+const mapCache = new Map<string, SourceMap | null>()
+
+async function loadMap(sheetURL: string, mapURL: string): Promise<SourceMap | null> {
+  const abs = new URL(mapURL, sheetURL).href
+  if (!mapCache.has(abs)) {
+    try {
+      let json: string
+      if (abs.startsWith('data:')) {
+        const comma = abs.indexOf(',')
+        const data = abs.slice(comma + 1)
+        json = abs.slice(0, comma).includes('base64') ? Buffer.from(data, 'base64').toString() : decodeURIComponent(data)
+      } else {
+        json = await (await fetch(abs)).text()
+      }
+      mapCache.set(abs, parseSourceMap(json))
+    } catch { mapCache.set(abs, null) }
+  }
+  return mapCache.get(abs)!
+}
 
 async function collectSheets(client: any): Promise<Map<string, SheetInfo>> {
   const cached = sheetCache.get(client)
@@ -73,7 +97,7 @@ export async function explain(client: any, selector: string, property: string): 
   const { matchedCSSRules = [], inline } = await client.CSS.getMatchedStylesForNode({ nodeId })
     .then((r: any) => ({ matchedCSSRules: r.matchedCSSRules, inline: r.inlineStyle }))
 
-  type Raw = CascadeEntry & { order: number; rank: number }
+  type Raw = CascadeEntry & { order: number; rank: number; col: number; sheetInfo?: SheetInfo }
   const raws: Raw[] = []
 
   matchedCSSRules.forEach((m: any, order: number) => {
@@ -114,6 +138,8 @@ export async function explain(client: any, selector: string, property: string): 
       via,
       order,
       rank: specRank(matched),
+      col: range?.startColumn ?? 0,
+      sheetInfo: info,
     })
   })
 
@@ -123,7 +149,19 @@ export async function explain(client: any, selector: string, property: string): 
       value: decl.value, selector: '(inline style)', specificity: '(inline)',
       important: Boolean(decl.important), file: '(inline)', line: 0,
       status: 'overridden', reason: null, order: Number.MAX_SAFE_INTEGER, rank: Number.MAX_SAFE_INTEGER,
+      col: 0,
     })
+  }
+
+  // resolve file:line through each declaration's source map, when it has one;
+  // sheets without a map (or a broken one) silently keep their generated position
+  for (const r of raws) {
+    const info = r.sheetInfo
+    if (!info?.sourceMapURL) continue
+    const map = await loadMap(info.sourceURL, info.sourceMapURL)
+    const genLine = r.line - 1 - info.startLine // r.line already folds in startLine + 1
+    const orig = map && originalPosition(map, genLine, r.col)
+    if (orig) { r.file = orig.source; r.line = orig.line }
   }
 
   // cascade: important first, then specificity, then source order (later wins)
@@ -131,7 +169,7 @@ export async function explain(client: any, selector: string, property: string): 
     Number(b.important) - Number(a.important) || b.rank - a.rank || b.order - a.order)
 
   const entries = raws.map((r, i) => {
-    const { order: _o, rank: _r, ...entry } = r
+    const { order: _o, rank: _r, col: _c, sheetInfo: _s, ...entry } = r
     if (i === 0) return { ...entry, status: 'winner' as const }
     const w = raws[0]
     const reason = w.important && !r.important ? 'lost: !important beats it'
