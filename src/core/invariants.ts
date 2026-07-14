@@ -203,9 +203,18 @@ export function checkInvariants(tree: BuiltTree): Violation[] {
 // browser overrode — worth naming the source rule for.
 const SUSPECT_RULES = new Set<Violation['rule']>(['viewport-overflow', 'parent-bleed', 'text-clip'])
 
-function pxRange(group: Violation[]): string {
+// Rules whose message leads with a single scalar px amount; WxH-style messages
+// (tap-target "16x16px", overlap "10x8px") would misparse into a bogus range.
+const SCALAR_RULES = new Set<Violation['rule']>(['viewport-overflow', 'parent-bleed', 'text-clip'])
+
+function groupSuffix(group: Violation[]): string {
+  if (group.length < 2) return ''
+  if (!SCALAR_RULES.has(group[0].rule)) return ` (×${group.length} similar)`
   const pxs = group.map((v) => v.message.match(/(\d+)px/)?.[1]).filter((x): x is string => x !== undefined).map(Number)
-  return pxs.length ? `${Math.min(...pxs)}–${Math.max(...pxs)}px` : `${group.length} elements`
+  const range = pxs.length ? `${Math.min(...pxs)}–${Math.max(...pxs)}px` : `${group.length} elements`
+  // ponytail: differing messages ≈ differing parents; parse the parent out of the message if this ever over-counts
+  const differ = group.some((v) => v.message !== group[0].message)
+  return ` (×${group.length}, ${range}${differ ? ` across ${group.length} parents` : ''})`
 }
 
 // Renders violations for CLI/MCP output, appending a `suspect:` line naming the
@@ -224,8 +233,7 @@ export async function renderViolations(client: any, violations: Violation[]): Pr
   const lines: string[] = []
   for (const group of groups.values()) {
     const first = group[0]
-    const suffix = group.length > 1 ? ` (×${group.length}, ${pxRange(group)})` : ''
-    lines.push(`${first.rule}: ${first.message}${suffix}`)
+    lines.push(`${first.rule}: ${first.message}${groupSuffix(group)}`)
     if (SUSPECT_RULES.has(first.rule)) {
       const e = await explain(client, { backendNodeId: first.backendNodeId }, 'width', first.selector).catch(() => null)
       const w = e?.entries.find((x) => x.status === 'winner')

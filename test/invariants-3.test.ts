@@ -38,4 +38,18 @@ test('renderViolations: groups repeats sharing (rule, selector) into one line wi
   expect(lines[0]).toContain('×3')
   expect(lines[0]).toContain('100')
   expect(lines[0]).toContain('120')
+  // the group spans three distinct parents — the line must not imply a single one
+  expect(lines[0]).toContain('across 3 parents')
+})
+
+test('renderViolations: dimension-style messages group with a count, no fabricated px range', async () => {
+  const text = await withPage(`${srv.url}/carousel/index.html`, async (c) => {
+    const tree = buildTree(await extract(c))
+    return renderViolations(c, checkInvariants(tree))
+  })
+  const lines = text.split('\n').filter((l) => l.startsWith('tap-target') && l.includes('a.icon'))
+  expect(lines).toHaveLength(1)
+  expect(lines[0]).toContain('×3')
+  // /(\d+)px/ against "is 16x16px" would fabricate a 16–16px "range" — must not appear
+  expect(lines[0]).not.toContain('16–16px')
 })
