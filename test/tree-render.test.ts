@@ -2,7 +2,7 @@ import { afterAll, expect, test } from 'vitest'
 import { serveFixtures } from './helpers/server.js'
 import { withPage, shutdownChrome } from '../src/core/connect.js'
 import { extract } from '../src/core/extract.js'
-import { buildTree, renderTree } from '../src/core/tree.js'
+import { buildTree, renderTree, selectorOf, walk, type LayoutNode } from '../src/core/tree.js'
 
 const srv = await serveFixtures('fixtures')
 afterAll(async () => { srv.close(); await shutdownChrome() })
@@ -38,6 +38,22 @@ test('collapses repeated siblings, keeps deviants separate', async () => {
   // collapsed run count: 3 identical before deviant, 2 after → ×3 and ×2
   expect(text).toMatch(/div\.card ×3/)
   expect(text).toMatch(/div\.card ×2/)
+})
+
+test('from option scopes rendering to a subtree and suppresses page flags', async () => {
+  const tree = await withPage(`${srv.url}/basic/index.html`, async (c) => buildTree(await extract(c)))
+  let main: LayoutNode | undefined
+  walk(tree.root, (n) => { if (selectorOf(n) === 'main') main = n })
+  const text = renderTree(tree, { from: main! })
+  expect(text.split('\n')[0].startsWith('main (0,64')).toBe(true)
+  expect(text).not.toContain('header#top')
+  expect(text).not.toContain('⚠H-OVERFLOW')
+})
+
+test('flags horizontal overflow on the root line', async () => {
+  const text = await render('/overflow-h/index.html')
+  // .wide is 1400px in a 1280px viewport → content overflows by 120px
+  expect(text.split('\n')[0].endsWith('⚠H-OVERFLOW:+120px')).toBe(true)
 })
 
 test('depth option truncates', async () => {
