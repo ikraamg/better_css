@@ -5,7 +5,8 @@
   "bin": { "bettercss": "./dist/cli.js" },
   "scripts": {
     "build": "tsc",
-    "test": "vitest run"
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.test.json"
   },
   "dependencies": {
     "chrome-remote-interface": "^0.33.2",

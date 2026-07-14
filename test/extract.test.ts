@@ -30,5 +30,5 @@ test('captures snapshot with layout bounds and whitelisted styles', async () => 
 
 // helper mirroring extract.ts whitelist ordering
 function STYLE_ORDER(prop: string): number {
-  return STYLE_WHITELIST.indexOf(prop)
+  return (STYLE_WHITELIST as readonly string[]).indexOf(prop)
 }
