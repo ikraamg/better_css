@@ -91,8 +91,9 @@ function textClip(tree: BuiltTree, out: Violation[], ctx: Ctx): void {
     if (ctx.ignored(n) || !ctx.visible(n) || n.textBoxes.length === 0) return
     const clips = ['hidden', 'clip'].includes(n.styles['overflow-x'] ?? '')
     if (!clips || n.styles['text-overflow'] === 'ellipsis') return
-    const padRight = Math.round(parseFloat(n.styles['padding-right'] ?? '0'))
-    const innerRight = n.box.x + n.box.w - padRight
+    // browsers clip at the padding-box edge, same boundary parentBleed uses
+    const borderRight = Math.round(parseFloat(n.styles['border-right-width'] ?? '0'))
+    const innerRight = n.box.x + n.box.w - borderRight
     const textRight = Math.max(...n.textBoxes.map((b) => b.x + b.w))
     if (textRight > innerRight + 1) {
       const snippet = (n.text ?? '').slice(0, 12)
@@ -107,7 +108,7 @@ function textClip(tree: BuiltTree, out: Violation[], ctx: Ctx): void {
 const layered = (n: LayoutNode) =>
   ((n.styles['position'] ?? 'static') !== 'static' && (n.styles['z-index'] ?? 'auto') !== 'auto') ||
   (n.styles['transform'] ?? 'none') !== 'none' ||
-  ['margin-top', 'margin-left'].some((m) => parseFloat(n.styles[m] ?? '0') < 0)
+  ['margin-top', 'margin-right', 'margin-bottom', 'margin-left'].some((m) => parseFloat(n.styles[m] ?? '0') < 0)
 
 function overlap(tree: BuiltTree, out: Violation[], ctx: Ctx): void {
   // collect visible nodes with ancestry chains
@@ -124,10 +125,13 @@ function overlap(tree: BuiltTree, out: Violation[], ctx: Ctx): void {
   collect(tree.root)
 
   // ponytail: O(n²) pair scan; spatial index if page size ever makes this slow
+  const reported = new Set<number>()
   for (let i = 0; i < entries.length; i++) {
     for (let j = i + 1; j < entries.length; j++) {
       const a = entries[i], b = entries[j]
-      if (a.chain.has(b.n) || b.chain.has(a.n)) continue // ancestor/descendant
+      // pre-order collection + i<j means an ancestor always precedes its descendant, so only a can be b's ancestor
+      if (b.chain.has(a.n)) continue
+      if (reported.has(b.n.backendNodeId)) continue // one report per element
       const ix = Math.min(a.n.box.x + a.n.box.w, b.n.box.x + b.n.box.w) - Math.max(a.n.box.x, b.n.box.x)
       const iy = Math.min(a.n.box.y + a.n.box.h, b.n.box.y + b.n.box.h) - Math.max(a.n.box.y, b.n.box.y)
       if (ix <= 4 || iy <= 4) continue // touching edges is not overlap
@@ -140,7 +144,8 @@ function overlap(tree: BuiltTree, out: Violation[], ctx: Ctx): void {
       report(out, b.n, 'overlap',
         `${selectorOf(b.n)} overlaps ${selectorOf(a.n)} by ${ix}x${iy}px with no layering opt-in (position+z-index, transform, or negative margin)`,
         `OVERLAP:${selectorOf(a.n)}`)
-      j = entries.length // one report per element is enough signal
+      reported.add(b.n.backendNodeId)
+      j = entries.length // one report per outer element is enough signal
     }
   }
 }

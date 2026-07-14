@@ -2,7 +2,10 @@
 * { margin: 0; font-family: monospace; }
 .clip { width: 120px; overflow: hidden; white-space: nowrap; }
 .ok { width: 120px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+/* text (8ch) exceeds the content box (7ch) but fits inside the padding box — browsers clip at the padding edge, so nothing is cut */
+.pill { width: 7ch; padding: 4px 12px; overflow: hidden; white-space: nowrap; }
 </style></head><body>
 <div class="clip">This text is definitely longer than 120 pixels of monospace</div>
 <div class="ok">This text is definitely longer than 120 pixels of monospace</div>
+<div class="pill">abcdefgh</div>
 </body></html>

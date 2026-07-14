@@ -21,9 +21,11 @@ test('text-clip: flags hidden overflow without ellipsis opt-in only', async () =
 
 test('overlap: flags un-layered overlap, allows z-indexed modal', async () => {
   const vs = (await violationsFor('/overlap/index.html')).filter((v) => v.rule === 'overlap')
-  expect(vs).toHaveLength(1)
+  expect(vs).toHaveLength(2)
   expect(vs[0].message).toContain('div.oops')
   expect(vs[0].message).toContain('header')
+  // z overlaps both x and y but is reported once
+  expect(vs.filter((v) => v.selector === 'div.z')).toHaveLength(1)
 })
 
 test('tap-target: flags sub-24px interactive elements', async () => {
