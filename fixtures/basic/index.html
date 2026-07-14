@@ -1,0 +1,14 @@
+<!doctype html>
+<html><head><style>
+* { margin: 0; box-sizing: border-box; font-family: monospace; }
+header { display: flex; flex-direction: row; gap: 16px; padding: 12px 24px; height: 64px; }
+.logo { width: 40px; height: 40px; background: #333; }
+nav { display: flex; gap: 24px; height: 24px; }
+main { display: grid; grid-template-columns: 240px 1fr; }
+.sidebar { height: 400px; background: #eee; }
+.content { padding: 32px; height: 400px; }
+</style></head>
+<body>
+<header id="top"><div class="logo"></div><nav><a href="#">Home</a><a href="#">Docs</a></nav></header>
+<main><aside class="sidebar"></aside><section class="content"><h1>Hello</h1></section></main>
+</body></html>
