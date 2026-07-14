@@ -2,7 +2,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
-import { pageWasBusy, withPage } from './core/connect.js'
+import { pageWasBusy, shutdownChrome, withPage } from './core/connect.js'
 import { extract } from './core/extract.js'
 import { buildTree, findNode, renderTree } from './core/tree.js'
 import { checkInvariants } from './core/invariants.js'
@@ -68,4 +68,16 @@ server.tool('diff', 'Structural diff of the current layout vs a named snapshot: 
     return renderDiff(diffTrees(loadSnapshot(name, dir), renderTree(tree)))
   }))
 
-await server.connect(new StdioServerTransport())
+// Every session launches its own headless Chrome + temp profile (src/core/connect.ts);
+// without this, exiting the MCP session leaks both. Cover both ways a session ends:
+// the host killing us directly, and the client ending our stdio.
+async function shutdown(): Promise<void> {
+  await shutdownChrome()
+  process.exit(0)
+}
+process.on('SIGINT', shutdown)
+process.on('SIGTERM', shutdown)
+
+const transport = new StdioServerTransport()
+transport.onclose = shutdown
+await server.connect(transport)
