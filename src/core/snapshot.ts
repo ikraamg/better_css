@@ -1,5 +1,5 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 
 export interface DiffEntry {
   kind: 'moved' | 'resized' | 'appeared' | 'disappeared'
@@ -15,7 +15,15 @@ export function saveSnapshot(text: string, name: string, dir = '.bettercss'): st
 }
 
 export function loadSnapshot(name: string, dir = '.bettercss'): string {
-  return readFileSync(join(dir, `${name}.tree`), 'utf8')
+  const path = join(dir, `${name}.tree`)
+  try {
+    return readFileSync(path, 'utf8')
+  } catch (err: any) {
+    if (err.code !== 'ENOENT') throw err
+    // Relative dirs resolve against the process cwd — for the MCP server that's
+    // wherever the host launched it, so name the absolute path in the error.
+    throw new Error(`No snapshot '${name}' at ${resolve(path)} — check the dir option and the server's working directory`)
+  }
 }
 
 // Matches renderTree's line shapes (src/core/tree.ts renderNode):

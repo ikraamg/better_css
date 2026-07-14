@@ -53,7 +53,7 @@ server.tool('check', 'Run layout invariants (overflow, bleed, clipped text, unin
   }))
 
 server.tool('snapshot', 'Lock the current layout as a named .tree snapshot for later diffing. Do this when the page looks CORRECT.',
-  { url, port, name: z.string(), dir: z.string().optional().describe('Snapshot dir (default .bettercss)') },
+  { url, port, name: z.string(), dir: z.string().optional().describe("Snapshot dir (default .bettercss relative to the MCP server's working directory — pass an absolute path when the server isn't launched from your project root)") },
   ({ url: u, port: p, name, dir }) => page(u, p, async (client) => {
     const tree = buildTree(await extract(client))
     checkInvariants(tree)
@@ -61,7 +61,7 @@ server.tool('snapshot', 'Lock the current layout as a named .tree snapshot for l
   }))
 
 server.tool('diff', 'Structural diff of the current layout vs a named snapshot: what moved/resized/appeared/disappeared, in px. Run after every CSS change to see its actual effect.',
-  { url, port, name: z.string(), dir: z.string().optional() },
+  { url, port, name: z.string(), dir: z.string().optional().describe("Snapshot dir (default .bettercss relative to the MCP server's working directory — pass an absolute path when the server isn't launched from your project root)") },
   ({ url: u, port: p, name, dir }) => page(u, p, async (client) => {
     const tree = buildTree(await extract(client))
     checkInvariants(tree)

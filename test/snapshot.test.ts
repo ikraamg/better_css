@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from 'vitest'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { serveFixtures } from './helpers/server.js'
 import { withPage, shutdownChrome } from '../src/core/connect.js'
 import { extract } from '../src/core/extract.js'
@@ -20,6 +20,12 @@ test('save/load round-trips', async () => {
   const file = saveSnapshot(text, 'before', dir)
   expect(file).toBe(join(dir, 'before.tree'))
   expect(loadSnapshot('before', dir)).toBe(text)
+})
+
+test('missing snapshot errors with the resolved path', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bettercss-test-'))
+  expect(() => loadSnapshot('nope', dir))
+    .toThrow(`No snapshot 'nope' at ${resolve(dir, 'nope.tree')} — check the dir option and the server's working directory`)
 })
 
 test('diff reports moved, resized nothing falsely, and disappeared', async () => {

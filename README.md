@@ -24,6 +24,12 @@ Add to `.mcp.json`:
 
 Tools: `layout`, `inspect`, `explain`, `check`, `snapshot`, `diff`.
 
+Note: `snapshot` and `diff` resolve a relative `dir` (default `.bettercss`)
+against the MCP server's working directory, which the host fixes at launch.
+When in doubt — e.g. one global `.mcp.json` shared across repos — pass an
+absolute `dir` argument, or register the server per-project in that project's
+`.mcp.json`.
+
 ## CLI (CI / scripts)
 
     npx bettercss check http://localhost:3000            # invariants, exit 1 on violations
