@@ -117,6 +117,13 @@ export async function withPage<T>(
   }
 }
 
+// Shared by the CLI's --viewport WxH flag and the MCP tools' viewport param.
+export function parseViewport(spec: string): { width: number; height: number } {
+  const m = spec.match(/^(\d+)x(\d+)$/)
+  if (!m) throw new Error(`--viewport must be WxH (e.g. 1280x800), got '${spec}'`)
+  return { width: Number(m[1]), height: Number(m[2]) }
+}
+
 export async function shutdownChrome(): Promise<void> {
   if (!launched) return
   const { proc, dir } = launched

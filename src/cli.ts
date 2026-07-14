@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { shutdownChrome, withPage } from './core/connect.js'
+import { parseViewport, shutdownChrome, withPage } from './core/connect.js'
 import { extract } from './core/extract.js'
 import { buildTree, findNode, renderTree } from './core/tree.js'
 import { checkInvariants, renderViolations } from './core/invariants.js'
@@ -14,7 +14,8 @@ const USAGE = `bettercss <command> <url> [options]
   check     <url>                              run invariants (exit 1 on violations)
   snapshot  <url> --name NAME [--dir DIR]      lock current LayoutTree to a .tree file
   diff      <url> --name NAME [--dir DIR]      diff current layout vs snapshot
-  options: --port N (attach to Chrome at port N instead of 9222/headless)`
+  options: --port N (attach to Chrome at port N instead of 9222/headless)
+           --viewport WxH (emulated viewport size, e.g. 1280x800)`
 
 function flags(argv: string[]): Record<string, string> {
   const out: Record<string, string> = {}
@@ -51,7 +52,12 @@ async function main(): Promise<number> {
       return 2
     }
   }
-  const opts = { port: f.port ? Number(f.port) : undefined }
+  let viewport: { width: number; height: number } | undefined
+  if (f.viewport !== undefined) {
+    try { viewport = parseViewport(f.viewport) }
+    catch (err) { console.error((err as Error).message); return 2 }
+  }
+  const opts = { port: f.port ? Number(f.port) : undefined, viewport }
 
   const output = await withPage(url, async (client) => {
     switch (cmd) {

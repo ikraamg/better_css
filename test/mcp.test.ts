@@ -28,6 +28,14 @@ test('layout tool returns the tree', async () => {
   expect(text).toContain('header#top (0,0 1280x64)')
 }, 60_000)
 
+test('layout tool accepts a viewport override', async () => {
+  const res = await client.callTool({
+    name: 'layout',
+    arguments: { url: `${srv.url}/basic/index.html`, viewport: '500x800' },
+  })
+  expect((res.content as any)[0].text).toContain('body (0,0 500x')
+}, 60_000)
+
 test('explain tool traces cascade', async () => {
   const res = await client.callTool({
     name: 'explain',

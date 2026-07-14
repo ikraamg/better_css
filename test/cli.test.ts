@@ -44,3 +44,14 @@ test('explain traces the cascade', async () => {
   const { stdout } = await cli('explain', `${srv.url}/cascade/index.html`, '--selector', '.sidebar', '--property', 'width')
   expect(stdout).toContain('✓ width: 300px')
 }, 60_000)
+
+test('layout --viewport WxH emulates the given viewport', async () => {
+  const { stdout } = await cli('layout', `${srv.url}/basic/index.html`, '--viewport', '500x800')
+  expect(stdout).toContain('body (0,0 500x')
+}, 60_000)
+
+test('--viewport with a malformed value exits 2', async () => {
+  const err = await cli('layout', `${srv.url}/basic/index.html`, '--viewport', 'nope').catch((e) => e)
+  expect(err.code).toBe(2)
+  expect(err.stderr).toContain('--viewport must be WxH')
+}, 60_000)
