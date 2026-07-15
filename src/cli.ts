@@ -72,7 +72,7 @@ async function main(): Promise<number> {
     try { viewports = parseViewportList(f.viewports) }
     catch (err) { console.error((err as Error).message); return 2 }
   }
-  if (stateFlags.length && viewports) {
+  if (stateFlags.length && viewports && cmd !== 'check') {
     console.error(`--${stateFlags[0]} is not supported together with --viewports yet.`)
     return 2
   }
@@ -81,7 +81,8 @@ async function main(): Promise<number> {
   if (viewports && ['check', 'snapshot', 'diff'].includes(cmd)) {
     const mopts = { port: opts.port }
     if (cmd === 'check') {
-      const { output, dirty } = await checkMatrix(url, viewports, mopts)
+      const states: PseudoStates = { hover: f.hover, focus: f.focus, active: f.active }
+      const { output, dirty } = await checkMatrix(url, viewports, { ...mopts, states })
       if (dirty) process.exitCode = 1
       console.log(output)
       return Number(process.exitCode ?? 0)

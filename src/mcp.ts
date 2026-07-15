@@ -57,17 +57,14 @@ server.tool('explain', 'Trace one CSS property to its source: which rule wins (f
   ({ url: u, port: p, viewport: v, selector, property, hover: h, focus: fo, active: a }) => page(u, { port: p, viewport: v, states: { hover: h, focus: fo, active: a } }, async (client) =>
     renderExplanation(await explain(client, selector, property))))
 
-server.tool('check', 'Run layout invariants (overflow, bleed, clipped text, unintended overlap, zero-size/tiny interactive elements). Violations are ALWAYS bugs — fix them. Pass hover/focus/active to see the layout consequences of interaction states without a mouse (not combinable with viewports yet).',
+server.tool('check', 'Run layout invariants (overflow, bleed, clipped text, unintended overlap, zero-size/tiny interactive elements). Violations are ALWAYS bugs — fix them. Pass hover/focus/active to see the layout consequences of interaction states without a mouse — combinable with viewports, forcing the state fresh inside each one.',
   { url, port, viewport, viewports, hover, focus, active },
-  ({ url: u, port: p, viewport: v, viewports: vs, hover: h, focus: fo, active: a }) => {
-    if (vs && (h || fo || a)) throw new Error('hover/focus/active are not supported together with viewports yet.')
-    return vs
-      ? checkMatrix(u, parseViewportList(vs), { port: p }).then((r) => text(r.output))
-      : page(u, { port: p, viewport: v, states: { hover: h, focus: fo, active: a } }, async (client) => {
-        const violations = checkInvariants(buildTree(await extract(client)))
-        return renderViolations(client, violations)
-      })
-  })
+  ({ url: u, port: p, viewport: v, viewports: vs, hover: h, focus: fo, active: a }) => vs
+    ? checkMatrix(u, parseViewportList(vs), { port: p, states: { hover: h, focus: fo, active: a } }).then((r) => text(r.output))
+    : page(u, { port: p, viewport: v, states: { hover: h, focus: fo, active: a } }, async (client) => {
+      const violations = checkInvariants(buildTree(await extract(client)))
+      return renderViolations(client, violations)
+    }))
 
 server.tool('snapshot', 'Lock the current layout as a named .tree snapshot for later diffing. Do this when the page looks CORRECT.',
   { url, port, viewport, viewports, name: z.string(), dir: z.string().optional().describe("Snapshot dir (default .bettercss relative to the MCP server's working directory — pass an absolute path when the server isn't launched from your project root)") },

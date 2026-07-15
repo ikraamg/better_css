@@ -91,6 +91,22 @@ test('check on the hover fixture is clean by default; --hover forces the state a
   expect(err.stdout).toContain('100px')
 }, 60_000)
 
+test('check --viewports + --hover forces the state inside each viewport (bleed at 1280 only, per the fixture media query)', async () => {
+  const err = await cli('check', `${srv.url}/hover/index.html`, '--viewports', '1280x800,600x800', '--hover', '.cta').catch((e) => e)
+  expect(err.code).toBe(1)
+  expect(err.stdout).toMatch(/\[1280x800\] parent-bleed: a\.cta/)
+  expect(err.stdout).toContain('[600x800] no violations')
+  expect(err.stdout).not.toMatch(/\[600x800\] parent-bleed/)
+  expect(err.stdout).toContain('checked 2 viewports: 1280x800=1 violations, 600x800=clean')
+}, 60_000)
+
+test('snapshot --viewports + --hover still rejects (state forcing in the matrix is check-only)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bettercss-test-'))
+  const err = await cli('snapshot', `${srv.url}/hover/index.html`, '--viewports', '1280x800,600x800', '--name', 'x', '--dir', dir, '--hover', '.cta').catch((e) => e)
+  expect(err.code).toBe(2)
+  expect(err.stderr).toContain('--hover')
+}, 60_000)
+
 test('layout --hover forces the state, changing width; without it, the natural width shows', async () => {
   const { stdout: hovered } = await cli('layout', `${srv.url}/hover/index.html`, '--hover', '.cta')
   expect(hovered).toContain('a.cta (0,0 400x40)')

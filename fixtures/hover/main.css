@@ -3,3 +3,4 @@
 .cta { display: block; width: 200px; height: 40px; background: steelblue; }
 .cta:hover { width: 400px; }
 .cta:focus { outline: 4px solid orange; min-height: 60px; }
+@media (max-width: 700px) { .rail { width: 500px } }

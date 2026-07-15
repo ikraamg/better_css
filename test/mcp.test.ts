@@ -72,6 +72,18 @@ test('check tool with hover param forces the state and surfaces the parent-bleed
   expect(text).toContain('100px')
 }, 60_000)
 
+test('check tool with viewports + hover forces the state inside each viewport (mirrors the CLI)', async () => {
+  const res = await client.callTool({
+    name: 'check',
+    arguments: { url: `${srv.url}/hover/index.html`, viewports: '1280x800,600x800', hover: '.cta' },
+  })
+  const text = (res.content as any)[0].text
+  expect(text).toMatch(/\[1280x800\] parent-bleed: a\.cta/)
+  expect(text).toContain('[600x800] no violations')
+  expect(text).not.toMatch(/\[600x800\] parent-bleed/)
+  expect(text).toContain('checked 2 viewports: 1280x800=1 violations, 600x800=clean')
+}, 60_000)
+
 test('check tool with viewports checks each viewport and prefixes violations with [WxH]', async () => {
   const res = await client.callTool({
     name: 'check',
