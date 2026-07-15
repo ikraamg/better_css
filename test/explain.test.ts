@@ -84,6 +84,23 @@ test('layoutNote names the flex-basis constraint from a flex shorthand', async (
   expect(e.layoutNote).toMatch(/main\.css:\d+/)
 })
 
+test('flex-grow sizing is never attributed to flex-basis', async () => {
+  // flex: 1 1 200px in a 1000px row — grow, not the 200px basis, sets the size
+  const e = await withPage(`${srv.url}/cascade/index.html`, (c) => explain(c, '.growchild', 'width'))
+  expect(e.declaredWinner).toBe('300px')
+  expect(e.computed).toBe('1000px')
+  expect(e.layoutNote).not.toContain('flex-basis')
+})
+
+test('competing max-width rules — the note names the cascade winner', async () => {
+  // .clamped { max-width: 300px } loses to the later .clamped { max-width: 240px }
+  const e = await withPage(`${srv.url}/cascade/index.html`, (c) => explain(c, '.clamped', 'width'))
+  expect(e.declaredWinner).toBe('400px')
+  expect(e.computed).toBe('240px')
+  expect(e.layoutNote).toContain('max-width: 240px')
+  expect(e.layoutNote).toContain('main.css:10')
+})
+
 test('unknown selector throws with suggestions', async () => {
   await expect(withPage(`${srv.url}/cascade/index.html`, (c) => explain(c, '.sidbar', 'width')))
     .rejects.toThrow(/No element matches '\.sidbar'/)

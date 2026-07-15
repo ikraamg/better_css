@@ -4,3 +4,7 @@
 .sidebar { border: 1px solid red; border-color: blue; }
 .flexrow { display: flex; }
 .flexchild { width: 300px; flex: 0 0 200px; }
+.growrow { display: flex; width: 1000px; }
+.growchild { width: 300px; flex: 1 1 200px; }
+.clamped { max-width: 300px; }
+.clamped { width: 400px; max-width: 240px; }

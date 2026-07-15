@@ -180,6 +180,10 @@ async function resolveFileLines(raws: Raw[]): Promise<void> {
 const fileRef = (r: { file: string; line: number }) =>
   r.file === '(inline)' ? '(inline style)' : `${r.file.split('/').pop()}:${r.line}`
 
+// cascade: important first, then specificity, then source order (later wins)
+const byCascade = (a: Raw, b: Raw) =>
+  Number(b.important) - Number(a.important) || b.rank - a.rank || b.order - a.order
+
 // Finds the declaration that's the actual cause of a declared-vs-computed mismatch,
 // re-scanning the already-fetched matchedCSSRules for a different property — no new
 // CDP call. Only "is the parent flex?" needs one: DOM.resolveNode + a single
@@ -187,13 +191,15 @@ const fileRef = (r: { file: string; line: number }) =>
 // cheaper than resolving a parent nodeId through DOM.requestNode + CSS.getComputedStyleForNode.
 async function nameConstraint(
   client: any, nodeId: number, matchedCSSRules: any[], sheets: Map<string, SheetInfo>,
-  property: string, declaredWinner: string, computed: string,
+  property: string, computed: string,
 ): Promise<string | null> {
   if (property !== 'width' && property !== 'height') return null
 
-  // (a) own flex-basis (possibly via the `flex` shorthand) competing with declared width/height
-  const flexBasis = rawsForProperty(matchedCSSRules, sheets, 'flex-basis').at(0)
-  if (flexBasis && flexBasis.value !== declaredWinner) {
+  // (a) own flex-basis (possibly via the `flex` shorthand) that produced the computed
+  // value — equality with computed is required, otherwise grow/shrink did the sizing
+  // and naming the basis would be a false attribution
+  const flexBasis = rawsForProperty(matchedCSSRules, sheets, 'flex-basis').sort(byCascade).at(0)
+  if (flexBasis && flexBasis.value === computed) {
     const { object } = await client.DOM.resolveNode({ nodeId })
     const { result } = await client.Runtime.callFunctionOn({
       objectId: object.objectId,
@@ -210,7 +216,7 @@ async function nameConstraint(
   // (b) own min/max clamp equal to the computed value
   const clampProps = property === 'width' ? ['min-width', 'max-width'] : ['min-height', 'max-height']
   for (const clampProp of clampProps) {
-    const clamp = rawsForProperty(matchedCSSRules, sheets, clampProp).at(0)
+    const clamp = rawsForProperty(matchedCSSRules, sheets, clampProp).sort(byCascade).at(0)
     if (clamp && clamp.value === computed) {
       await resolveFileLines([clamp])
       return `${clampProp}: ${clamp.value} @ ${fileRef(clamp)}`
@@ -252,9 +258,7 @@ export async function explain(
 
   await resolveFileLines(raws)
 
-  // cascade: important first, then specificity, then source order (later wins)
-  raws.sort((a, b) =>
-    Number(b.important) - Number(a.important) || b.rank - a.rank || b.order - a.order)
+  raws.sort(byCascade)
 
   const entries = raws.map((r, i) => {
     const { order: _o, rank: _r, col: _c, sheetInfo: _s, ...entry } = r
@@ -269,7 +273,7 @@ export async function explain(
   const declaredWinner = entries[0]?.value ?? null
   let layoutNote: string | null = null
   if (declaredWinner !== null && declaredWinner !== computed && layoutRelevant(property, declaredWinner, computed)) {
-    const constraint = await nameConstraint(client, nodeId, matchedCSSRules, sheets, property, declaredWinner, computed)
+    const constraint = await nameConstraint(client, nodeId, matchedCSSRules, sheets, property, computed)
     layoutNote = `computed ${computed} differs from declared ${declaredWinner} — ${
       constraint ? `constrained by ${constraint}` : 'layout constraints override (parent grid/flex track sizing, min/max, or stretch)'
     }`
