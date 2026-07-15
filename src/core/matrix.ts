@@ -1,4 +1,4 @@
-import { forEachViewport, type Viewport } from './connect.js'
+import { forEachViewport, pageWasBusy, type Viewport } from './connect.js'
 import { extract } from './extract.js'
 import { buildTree, renderTree } from './tree.js'
 import { checkInvariants, renderViolations } from './invariants.js'
@@ -6,6 +6,12 @@ import { diffTrees, loadSnapshot, renderDiff, saveSnapshot } from './snapshot.js
 
 function prefixLines(label: string, text: string): string {
   return text.split('\n').map((line) => `[${label}] ${line}`).join('\n')
+}
+
+// Matrix paths bypass mcp.ts's page() wrapper, so mirror its busy note here —
+// same wording, appended per viewport (each viewport gets its own 10s cap).
+function busyNote(client: object): string {
+  return pageWasBusy(client) ? '\nnote: page was still loading at the 10s cap; results may be early' : ''
 }
 
 // check, once per viewport (sequential, input order). Exit-worthiness (`dirty`) is any
@@ -16,7 +22,7 @@ export async function checkMatrix(
 ): Promise<{ output: string; dirty: boolean }> {
   const results = await forEachViewport(url, viewports, async (client) => {
     const violations = checkInvariants(buildTree(await extract(client)))
-    return { violations, rendered: await renderViolations(client, violations) }
+    return { violations, rendered: (await renderViolations(client, violations)) + busyNote(client) }
   }, opts)
   const body = results.map((r) => prefixLines(r.label, r.result.rendered)).join('\n')
   const summary = results
@@ -34,9 +40,9 @@ export async function snapshotMatrix(
   const results = await forEachViewport(url, viewports, async (client, vp) => {
     const tree = buildTree(await extract(client))
     checkInvariants(tree)
-    return saveSnapshot(renderTree(tree), `${name}@${vp.label}`, dir)
+    return `saved ${saveSnapshot(renderTree(tree), `${name}@${vp.label}`, dir)}${busyNote(client)}`
   }, opts)
-  return results.map((r) => `saved ${r.result}`).join('\n')
+  return results.map((r) => r.result).join('\n')
 }
 
 // diff, once per viewport against its `<name>@WxH.tree` snapshot. A missing/mismatched
@@ -47,7 +53,7 @@ export async function diffMatrix(
   const results = await forEachViewport(url, viewports, async (client, vp) => {
     const tree = buildTree(await extract(client))
     checkInvariants(tree)
-    return renderDiff(diffTrees(loadSnapshot(`${name}@${vp.label}`, dir), renderTree(tree)))
+    return renderDiff(diffTrees(loadSnapshot(`${name}@${vp.label}`, dir), renderTree(tree))) + busyNote(client)
   }, opts)
   return results.map((r) => prefixLines(r.label, r.result)).join('\n')
 }
