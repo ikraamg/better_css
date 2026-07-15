@@ -111,27 +111,14 @@ function layoutRelevant(property: string, declared: string, computed: string): b
   return bothPxLengths || GEOMETRY_PROPERTY.test(property)
 }
 
-export async function explain(
-  client: any,
-  target: string | { backendNodeId: number },
-  property: string,
-  context?: string,
-): Promise<Explanation> {
-  const sheets = await collectSheets(client)
-  const nodeId = typeof target === 'string' ? await resolveNode(client, target) : await resolveBackendNode(client, target.backendNodeId)
-  // display-only: reuse the caller's display string when given one (e.g. renderViolations
-  // already computed selectorOf(n)); a bare backendNodeId is a fine fallback otherwise.
-  const selector = typeof target === 'string' ? target : (context ?? `[backendNodeId ${target.backendNodeId}]`)
+type Raw = CascadeEntry & { order: number; rank: number; col: number; sheetInfo?: SheetInfo }
 
-  const { computedStyle } = await client.CSS.getComputedStyleForNode({ nodeId })
-  const computed = computedStyle.find((p: any) => p.name === property)?.value ?? '(none)'
-
-  const { matchedCSSRules = [], inline } = await client.CSS.getMatchedStylesForNode({ nodeId })
-    .then((r: any) => ({ matchedCSSRules: r.matchedCSSRules, inline: r.inlineStyle }))
-
-  type Raw = CascadeEntry & { order: number; rank: number; col: number; sheetInfo?: SheetInfo }
+// Scans matchedCSSRules for one property, attributing shorthand-derived longhands via
+// the `via` field. Shared by the main explain() trace and by the layoutNote's
+// constraint-naming checks (flex-basis, min/max-width/height) — those re-scan the
+// same already-fetched payload for a different property, no extra CDP call.
+function rawsForProperty(matchedCSSRules: any[], sheets: Map<string, SheetInfo>, property: string): Raw[] {
   const raws: Raw[] = []
-
   matchedCSSRules.forEach((m: any, order: number) => {
     if (m.rule.origin !== 'regular') return // skip user-agent rules
     // Within one rule the LAST declaration wins (common fallback pattern:
@@ -174,6 +161,84 @@ export async function explain(
       sheetInfo: info,
     })
   })
+  return raws
+}
+
+// resolves file:line through each declaration's source map, when it has one;
+// sheets without a map (or a broken one) silently keep their generated position
+async function resolveFileLines(raws: Raw[]): Promise<void> {
+  for (const r of raws) {
+    const info = r.sheetInfo
+    if (!info?.sourceMapURL) continue
+    const map = await loadMap(info.sourceURL, info.sourceMapURL)
+    const genLine = r.line - 1 - info.startLine // r.line already folds in startLine + 1
+    const orig = map && originalPosition(map, genLine, r.col)
+    if (orig) { r.file = orig.source; r.line = orig.line }
+  }
+}
+
+const fileRef = (r: { file: string; line: number }) =>
+  r.file === '(inline)' ? '(inline style)' : `${r.file.split('/').pop()}:${r.line}`
+
+// Finds the declaration that's the actual cause of a declared-vs-computed mismatch,
+// re-scanning the already-fetched matchedCSSRules for a different property — no new
+// CDP call. Only "is the parent flex?" needs one: DOM.resolveNode + a single
+// Runtime.callFunctionOn running getComputedStyle(this.parentElement) in the page,
+// cheaper than resolving a parent nodeId through DOM.requestNode + CSS.getComputedStyleForNode.
+async function nameConstraint(
+  client: any, nodeId: number, matchedCSSRules: any[], sheets: Map<string, SheetInfo>,
+  property: string, declaredWinner: string, computed: string,
+): Promise<string | null> {
+  if (property !== 'width' && property !== 'height') return null
+
+  // (a) own flex-basis (possibly via the `flex` shorthand) competing with declared width/height
+  const flexBasis = rawsForProperty(matchedCSSRules, sheets, 'flex-basis').at(0)
+  if (flexBasis && flexBasis.value !== declaredWinner) {
+    const { object } = await client.DOM.resolveNode({ nodeId })
+    const { result } = await client.Runtime.callFunctionOn({
+      objectId: object.objectId,
+      functionDeclaration: 'function(){ const p = this.parentElement; return p ? getComputedStyle(p).display : null }',
+      returnByValue: true,
+    })
+    if (result.value === 'flex' || result.value === 'inline-flex') {
+      await resolveFileLines([flexBasis])
+      const via = flexBasis.via ? ` (via ${flexBasis.via})` : ''
+      return `flex-basis: ${flexBasis.value}${via} @ ${fileRef(flexBasis)}`
+    }
+  }
+
+  // (b) own min/max clamp equal to the computed value
+  const clampProps = property === 'width' ? ['min-width', 'max-width'] : ['min-height', 'max-height']
+  for (const clampProp of clampProps) {
+    const clamp = rawsForProperty(matchedCSSRules, sheets, clampProp).at(0)
+    if (clamp && clamp.value === computed) {
+      await resolveFileLines([clamp])
+      return `${clampProp}: ${clamp.value} @ ${fileRef(clamp)}`
+    }
+  }
+
+  return null // (c) falls through to the generic message — still correct for parent-grid track sizing
+}
+
+export async function explain(
+  client: any,
+  target: string | { backendNodeId: number },
+  property: string,
+  context?: string,
+): Promise<Explanation> {
+  const sheets = await collectSheets(client)
+  const nodeId = typeof target === 'string' ? await resolveNode(client, target) : await resolveBackendNode(client, target.backendNodeId)
+  // display-only: reuse the caller's display string when given one (e.g. renderViolations
+  // already computed selectorOf(n)); a bare backendNodeId is a fine fallback otherwise.
+  const selector = typeof target === 'string' ? target : (context ?? `[backendNodeId ${target.backendNodeId}]`)
+
+  const { computedStyle } = await client.CSS.getComputedStyleForNode({ nodeId })
+  const computed = computedStyle.find((p: any) => p.name === property)?.value ?? '(none)'
+
+  const { matchedCSSRules = [], inline } = await client.CSS.getMatchedStylesForNode({ nodeId })
+    .then((r: any) => ({ matchedCSSRules: r.matchedCSSRules, inline: r.inlineStyle }))
+
+  const raws = rawsForProperty(matchedCSSRules, sheets, property)
 
   if (inline?.cssProperties?.some((p: any) => p.name === property && p.text)) {
     const decl = inline.cssProperties.find((p: any) => p.name === property)
@@ -185,16 +250,7 @@ export async function explain(
     })
   }
 
-  // resolve file:line through each declaration's source map, when it has one;
-  // sheets without a map (or a broken one) silently keep their generated position
-  for (const r of raws) {
-    const info = r.sheetInfo
-    if (!info?.sourceMapURL) continue
-    const map = await loadMap(info.sourceURL, info.sourceMapURL)
-    const genLine = r.line - 1 - info.startLine // r.line already folds in startLine + 1
-    const orig = map && originalPosition(map, genLine, r.col)
-    if (orig) { r.file = orig.source; r.line = orig.line }
-  }
+  await resolveFileLines(raws)
 
   // cascade: important first, then specificity, then source order (later wins)
   raws.sort((a, b) =>
@@ -211,9 +267,13 @@ export async function explain(
   })
 
   const declaredWinner = entries[0]?.value ?? null
-  const layoutNote = declaredWinner !== null && declaredWinner !== computed && layoutRelevant(property, declaredWinner, computed)
-    ? `computed ${computed} differs from declared ${declaredWinner} — layout constraints override (parent grid/flex track sizing, min/max, or stretch)`
-    : null
+  let layoutNote: string | null = null
+  if (declaredWinner !== null && declaredWinner !== computed && layoutRelevant(property, declaredWinner, computed)) {
+    const constraint = await nameConstraint(client, nodeId, matchedCSSRules, sheets, property, declaredWinner, computed)
+    layoutNote = `computed ${computed} differs from declared ${declaredWinner} — ${
+      constraint ? `constrained by ${constraint}` : 'layout constraints override (parent grid/flex track sizing, min/max, or stretch)'
+    }`
+  }
 
   return { selector, property, computed, declaredWinner, layoutNote, entries }
 }
@@ -222,7 +282,7 @@ export function renderExplanation(e: Explanation): string {
   const lines = [`${e.selector} ${e.property} = ${e.computed}`]
   for (const x of e.entries) {
     const mark = x.status === 'winner' ? '✓' : '✗'
-    const src = x.file === '(inline)' ? '(inline style)' : `${x.file.split('/').pop()}:${x.line}`
+    const src = fileRef(x)
     const note = x.status === 'winner' ? (e.layoutNote ? ` — ${e.layoutNote}` : '') : ` — ${x.reason}`
     const via = x.via ? ` (via ${x.via})` : ''
     lines.push(`  ${mark} ${e.property}: ${x.value}${x.important ? ' !important' : ''}${via}   ${src} (${x.selector} ${x.specificity})${note}`)

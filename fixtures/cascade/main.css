@@ -2,3 +2,5 @@
 .grid > div { max-width: 240px; }
 .other { width: 111px; width: 222px; }
 .sidebar { border: 1px solid red; border-color: blue; }
+.flexrow { display: flex; }
+.flexchild { width: 300px; flex: 0 0 200px; }

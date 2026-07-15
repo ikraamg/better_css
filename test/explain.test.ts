@@ -19,8 +19,10 @@ test('traces winner with file:line, losers with reasons', async () => {
   expect(loser.value).toBe('100%')
   expect(loser.file).toContain('reset.css')
   expect(loser.reason).toContain('specificity')
-  // declared 300px but computed 240px → layout constraint note
-  expect(e.layoutNote).toContain('grid')
+  // declared 300px but computed 240px → the real constraint is .grid > div's
+  // own max-width: 240px (case b), not grid track sizing itself
+  expect(e.layoutNote).toContain('max-width: 240px')
+  expect(e.layoutNote).toMatch(/main\.css:\d+/)
 })
 
 test('renderExplanation produces the ✓/✗ block', async () => {
@@ -71,6 +73,15 @@ test('color properties never get a layout-constraints note (serialization mismat
   expect(e.declaredWinner).toBe('blue')
   expect(e.computed).toBe('rgb(0, 0, 255)')
   expect(e.layoutNote).toBeNull()
+})
+
+test('layoutNote names the flex-basis constraint from a flex shorthand', async () => {
+  const e = await withPage(`${srv.url}/cascade/index.html`, (c) => explain(c, '.flexchild', 'width'))
+  expect(e.declaredWinner).toBe('300px')
+  expect(e.computed).toBe('200px')
+  expect(e.layoutNote).toContain('flex-basis: 200px')
+  expect(e.layoutNote).toContain('via flex: 0 0 200px')
+  expect(e.layoutNote).toMatch(/main\.css:\d+/)
 })
 
 test('unknown selector throws with suggestions', async () => {
