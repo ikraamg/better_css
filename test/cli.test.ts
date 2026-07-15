@@ -55,3 +55,17 @@ test('--viewport with a malformed value exits 2', async () => {
   expect(err.code).toBe(2)
   expect(err.stderr).toContain('--viewport must be WxH')
 }, 60_000)
+
+test('layout on a deep tree defaults to the 400-line budget with a truncation note', async () => {
+  const { stdout } = await cli('layout', `${srv.url}/deep/index.html`)
+  const lines = stdout.trimEnd().split('\n')
+  expect(lines.length).toBeLessThanOrEqual(400)
+  expect(stdout).toContain('truncated to depth')
+}, 60_000)
+
+test('layout --depth on a deep tree disables the budget', async () => {
+  const { stdout } = await cli('layout', `${srv.url}/deep/index.html`, '--depth', '500')
+  const lines = stdout.trimEnd().split('\n')
+  expect(lines.length).toBeGreaterThan(400)
+  expect(stdout).not.toContain('truncated to depth')
+}, 60_000)

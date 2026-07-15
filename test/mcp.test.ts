@@ -36,6 +36,14 @@ test('layout tool accepts a viewport override', async () => {
   expect((res.content as any)[0].text).toContain('body (0,0 500x')
 }, 60_000)
 
+test('layout tool defaults to the 400-line budget on a deep tree, with a truncation note', async () => {
+  const res = await client.callTool({ name: 'layout', arguments: { url: `${srv.url}/deep/index.html` } })
+  const text = (res.content as any)[0].text
+  const lines = text.split('\n')
+  expect(lines.length).toBeLessThanOrEqual(400)
+  expect(text).toContain('truncated to depth')
+}, 60_000)
+
 test('explain tool traces cascade', async () => {
   const res = await client.callTool({
     name: 'explain',
