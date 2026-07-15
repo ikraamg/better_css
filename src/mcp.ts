@@ -2,13 +2,14 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
-import { pageWasBusy, parseViewport, shutdownChrome, withPage } from './core/connect.js'
+import { pageWasBusy, parseViewport, parseViewportList, shutdownChrome, withPage } from './core/connect.js'
 import { extract } from './core/extract.js'
 import { buildTree, findNode, renderTree } from './core/tree.js'
 import { checkInvariants, renderViolations } from './core/invariants.js'
 import { explain, renderExplanation } from './core/explain.js'
 import { inspect } from './core/inspect.js'
 import { diffTrees, loadSnapshot, renderDiff, saveSnapshot } from './core/snapshot.js'
+import { checkMatrix, diffMatrix, snapshotMatrix } from './core/matrix.js'
 
 const server = new McpServer({ name: 'bettercss', version: '0.1.0' })
 
@@ -16,6 +17,7 @@ const text = (s: string) => ({ content: [{ type: 'text' as const, text: s }] })
 const url = z.string().describe('Page URL (usually your dev server)')
 const port = z.number().optional().describe('Chrome debugging port (default: 9222 or auto-launched headless)')
 const viewport = z.string().optional().describe('Emulated viewport size as WxH, e.g. 1280x800 (default: 1280x800)')
+const viewports = z.string().optional().describe('Comma-separated WxH list, e.g. "600x800,1280x800" — runs once per viewport, prefixing each output line with [WxH] (check/snapshot/diff only; overrides viewport when given)')
 
 function page(
   u: string,
@@ -49,27 +51,33 @@ server.tool('explain', 'Trace one CSS property to its source: which rule wins (f
     renderExplanation(await explain(client, selector, property))))
 
 server.tool('check', 'Run layout invariants (overflow, bleed, clipped text, unintended overlap, zero-size/tiny interactive elements). Violations are ALWAYS bugs — fix them.',
-  { url, port, viewport },
-  ({ url: u, port: p, viewport: v }) => page(u, { port: p, viewport: v }, async (client) => {
-    const violations = checkInvariants(buildTree(await extract(client)))
-    return renderViolations(client, violations)
-  }))
+  { url, port, viewport, viewports },
+  ({ url: u, port: p, viewport: v, viewports: vs }) => vs
+    ? checkMatrix(u, parseViewportList(vs), { port: p }).then((r) => text(r.output))
+    : page(u, { port: p, viewport: v }, async (client) => {
+      const violations = checkInvariants(buildTree(await extract(client)))
+      return renderViolations(client, violations)
+    }))
 
 server.tool('snapshot', 'Lock the current layout as a named .tree snapshot for later diffing. Do this when the page looks CORRECT.',
-  { url, port, viewport, name: z.string(), dir: z.string().optional().describe("Snapshot dir (default .bettercss relative to the MCP server's working directory — pass an absolute path when the server isn't launched from your project root)") },
-  ({ url: u, port: p, viewport: v, name, dir }) => page(u, { port: p, viewport: v }, async (client) => {
-    const tree = buildTree(await extract(client))
-    checkInvariants(tree)
-    return `saved ${saveSnapshot(renderTree(tree), name, dir)}`
-  }))
+  { url, port, viewport, viewports, name: z.string(), dir: z.string().optional().describe("Snapshot dir (default .bettercss relative to the MCP server's working directory — pass an absolute path when the server isn't launched from your project root)") },
+  ({ url: u, port: p, viewport: v, viewports: vs, name, dir }) => vs
+    ? snapshotMatrix(u, parseViewportList(vs), name, dir, { port: p }).then((s) => text(s))
+    : page(u, { port: p, viewport: v }, async (client) => {
+      const tree = buildTree(await extract(client))
+      checkInvariants(tree)
+      return `saved ${saveSnapshot(renderTree(tree), name, dir)}`
+    }))
 
 server.tool('diff', 'Structural diff of the current layout vs a named snapshot: what moved/resized/appeared/disappeared, in px. Run after every CSS change to see its actual effect.',
-  { url, port, viewport, name: z.string(), dir: z.string().optional().describe("Snapshot dir (default .bettercss relative to the MCP server's working directory — pass an absolute path when the server isn't launched from your project root)") },
-  ({ url: u, port: p, viewport: v, name, dir }) => page(u, { port: p, viewport: v }, async (client) => {
-    const tree = buildTree(await extract(client))
-    checkInvariants(tree)
-    return renderDiff(diffTrees(loadSnapshot(name, dir), renderTree(tree)))
-  }))
+  { url, port, viewport, viewports, name: z.string(), dir: z.string().optional().describe("Snapshot dir (default .bettercss relative to the MCP server's working directory — pass an absolute path when the server isn't launched from your project root)") },
+  ({ url: u, port: p, viewport: v, viewports: vs, name, dir }) => vs
+    ? diffMatrix(u, parseViewportList(vs), name, dir, { port: p }).then((s) => text(s))
+    : page(u, { port: p, viewport: v }, async (client) => {
+      const tree = buildTree(await extract(client))
+      checkInvariants(tree)
+      return renderDiff(diffTrees(loadSnapshot(name, dir), renderTree(tree)))
+    }))
 
 // Every session launches its own headless Chrome + temp profile (src/core/connect.ts);
 // without this, exiting the MCP session leaks both. Cover both ways a session ends:

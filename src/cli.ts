@@ -1,11 +1,12 @@
 #!/usr/bin/env node
-import { parseViewport, shutdownChrome, withPage } from './core/connect.js'
+import { parseViewport, parseViewportList, shutdownChrome, withPage, type Viewport } from './core/connect.js'
 import { extract } from './core/extract.js'
 import { buildTree, findNode, renderTree } from './core/tree.js'
 import { checkInvariants, renderViolations } from './core/invariants.js'
 import { explain, renderExplanation } from './core/explain.js'
 import { inspect } from './core/inspect.js'
 import { diffTrees, loadSnapshot, renderDiff, saveSnapshot } from './core/snapshot.js'
+import { checkMatrix, diffMatrix, snapshotMatrix } from './core/matrix.js'
 
 const USAGE = `bettercss <command> <url> [options]
   layout    <url> [--selector S] [--depth N]   print the LayoutTree (budgeted to 400 lines unless --depth is given)
@@ -15,7 +16,8 @@ const USAGE = `bettercss <command> <url> [options]
   snapshot  <url> --name NAME [--dir DIR]      lock current LayoutTree to a .tree file
   diff      <url> --name NAME [--dir DIR]      diff current layout vs snapshot
   options: --port N (attach to Chrome at port N instead of 9222/headless)
-           --viewport WxH (emulated viewport size, e.g. 1280x800)`
+           --viewport WxH (emulated viewport size, e.g. 1280x800)
+           --viewports W1xH1,W2xH2,... (check/snapshot/diff once per viewport)`
 
 function flags(argv: string[]): Record<string, string> {
   const out: Record<string, string> = {}
@@ -57,7 +59,25 @@ async function main(): Promise<number> {
     try { viewport = parseViewport(f.viewport) }
     catch (err) { console.error((err as Error).message); return 2 }
   }
+  let viewports: Viewport[] | undefined
+  if (f.viewports !== undefined) {
+    try { viewports = parseViewportList(f.viewports) }
+    catch (err) { console.error((err as Error).message); return 2 }
+  }
   const opts = { port: f.port ? Number(f.port) : undefined, viewport }
+
+  if (viewports && ['check', 'snapshot', 'diff'].includes(cmd)) {
+    const mopts = { port: opts.port }
+    if (cmd === 'check') {
+      const { output, dirty } = await checkMatrix(url, viewports, mopts)
+      if (dirty) process.exitCode = 1
+      console.log(output)
+      return Number(process.exitCode ?? 0)
+    }
+    if (cmd === 'snapshot') console.log(await snapshotMatrix(url, viewports, f.name, f.dir, mopts))
+    else console.log(await diffMatrix(url, viewports, f.name, f.dir, mopts))
+    return Number(process.exitCode ?? 0)
+  }
 
   const output = await withPage(url, async (client) => {
     switch (cmd) {

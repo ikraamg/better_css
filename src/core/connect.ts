@@ -124,6 +124,33 @@ export function parseViewport(spec: string): { width: number; height: number } {
   return { width: Number(m[1]), height: Number(m[2]) }
 }
 
+export interface Viewport { label: string; width: number; height: number }
+
+// Shared by the CLI's --viewports and the MCP tools' viewports param: comma-separated
+// WxH list, e.g. "600x800,1280x800". label preserves the original WxH text for output prefixes.
+export function parseViewportList(spec: string): Viewport[] {
+  return spec.split(',').map((s) => {
+    const label = s.trim()
+    return { label, ...parseViewport(label) }
+  })
+}
+
+// One withPage per viewport (withPage opens a single page per call) — sequential and in
+// input order, so the matrix's summary line stays deterministic.
+export async function forEachViewport<T>(
+  url: string,
+  viewports: Viewport[],
+  fn: (client: any, vp: Viewport) => Promise<T>,
+  opts: { port?: number } = {},
+): Promise<Array<{ label: string; result: T }>> {
+  const out: Array<{ label: string; result: T }> = []
+  for (const vp of viewports) {
+    const result = await withPage(url, (client) => fn(client, vp), { port: opts.port, viewport: vp })
+    out.push({ label: vp.label, result })
+  }
+  return out
+}
+
 export async function shutdownChrome(): Promise<void> {
   if (!launched) return
   const { proc, dir } = launched

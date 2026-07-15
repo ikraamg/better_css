@@ -1,6 +1,9 @@
 import { afterAll, expect, test } from 'vitest'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import { cpSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { serveFixtures } from './helpers/server.js'
 
 const run = promisify(execFile)
@@ -68,4 +71,35 @@ test('layout --depth on a deep tree disables the budget', async () => {
   const lines = stdout.trimEnd().split('\n')
   expect(lines.length).toBeGreaterThan(400)
   expect(stdout).not.toContain('truncated to depth')
+}, 60_000)
+
+test('check --viewports checks each viewport and prefixes violations with [WxH]', async () => {
+  const err = await cli('check', `${srv.url}/responsive/index.html`, '--viewports', '1280x800,600x800').catch((e) => e)
+  expect(err.code).toBe(1)
+  expect(err.stdout).toContain('[600x800] viewport-overflow')
+  expect(err.stdout).not.toMatch(/\[1280x800\] viewport-overflow/)
+  expect(err.stdout).toContain('checked 2 viewports: 1280x800=clean, 600x800=2 violations')
+}, 60_000)
+
+test('snapshot --viewports then diff --viewports round-trips clean, then shows a prefixed diff on change', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bettercss-test-'))
+  const workDir = mkdtempSync(join(tmpdir(), 'bettercss-fixture-'))
+  cpSync('fixtures/responsive', workDir, { recursive: true })
+
+  await cli('snapshot', `${srv.url}/responsive/index.html`, '--viewports', '1280x800,600x800', '--name', 'resp', '--dir', dir)
+
+  const { stdout: cleanDiff } = await cli('diff', `${srv.url}/responsive/index.html`, '--viewports', '1280x800,600x800', '--name', 'resp', '--dir', dir)
+  expect(cleanDiff).toContain('[1280x800] (no layout changes)')
+  expect(cleanDiff).toContain('[600x800] (no layout changes)')
+
+  // CSS-visible change on the same fixture, served from a temp copy
+  writeFileSync(join(workDir, 'index.html'),
+    '<!doctype html><html><head><style>* { margin: 0; } .fixed { width: 720px; height: 90px; background: tomato; }</style></head><body><div class="fixed"></div></body></html>')
+  const changedSrv = await serveFixtures(workDir)
+  try {
+    const { stdout: changedDiff } = await cli('diff', `${changedSrv.url}/index.html`, '--viewports', '1280x800,600x800', '--name', 'resp', '--dir', dir)
+    expect(changedDiff).toMatch(/\[600x800\] resized/)
+  } finally {
+    changedSrv.close()
+  }
 }, 60_000)

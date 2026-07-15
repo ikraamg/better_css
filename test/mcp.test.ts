@@ -1,5 +1,8 @@
 import { afterAll, expect, test } from 'vitest'
 import { execSync } from 'node:child_process'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { serveFixtures } from './helpers/server.js'
@@ -57,6 +60,32 @@ test('check tool reports violations with a suspect rule', async () => {
   const text = (res.content as any)[0].text
   expect(text).toContain('viewport-overflow')
   expect(text).toMatch(/suspect: width: 1400px/)
+}, 60_000)
+
+test('check tool with viewports checks each viewport and prefixes violations with [WxH]', async () => {
+  const res = await client.callTool({
+    name: 'check',
+    arguments: { url: `${srv.url}/responsive/index.html`, viewports: '1280x800,600x800' },
+  })
+  const text = (res.content as any)[0].text
+  expect(text).toContain('[600x800] viewport-overflow')
+  expect(text).not.toMatch(/\[1280x800\] viewport-overflow/)
+  expect(text).toContain('checked 2 viewports: 1280x800=clean, 600x800=2 violations')
+}, 60_000)
+
+test('snapshot/diff tools with viewports round-trip per-viewport snapshots', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bettercss-mcp-test-'))
+  await client.callTool({
+    name: 'snapshot',
+    arguments: { url: `${srv.url}/responsive/index.html`, viewports: '1280x800,600x800', name: 'resp', dir },
+  })
+  const res = await client.callTool({
+    name: 'diff',
+    arguments: { url: `${srv.url}/responsive/index.html`, viewports: '1280x800,600x800', name: 'resp', dir },
+  })
+  const text = (res.content as any)[0].text
+  expect(text).toContain('[1280x800] (no layout changes)')
+  expect(text).toContain('[600x800] (no layout changes)')
 }, 60_000)
 
 test('shuts down its headless Chrome subprocess when the MCP session closes', async () => {
