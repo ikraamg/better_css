@@ -197,16 +197,19 @@ async function nameConstraint(
 
   // (a) own flex-basis (possibly via the `flex` shorthand) that produced the computed
   // value — equality with computed is required, otherwise grow/shrink did the sizing
-  // and naming the basis would be a false attribution
+  // and naming the basis would be a false attribution. flex-basis sizes the MAIN axis
+  // only, so width needs a row parent and height a column parent.
   const flexBasis = rawsForProperty(matchedCSSRules, sheets, 'flex-basis').sort(byCascade).at(0)
   if (flexBasis && flexBasis.value === computed) {
     const { object } = await client.DOM.resolveNode({ nodeId })
     const { result } = await client.Runtime.callFunctionOn({
       objectId: object.objectId,
-      functionDeclaration: 'function(){ const p = this.parentElement; return p ? getComputedStyle(p).display : null }',
+      functionDeclaration: 'function(){ const p = this.parentElement; if (!p) return null; const s = getComputedStyle(p); return [s.display, s.flexDirection] }',
       returnByValue: true,
     })
-    if (result.value === 'flex' || result.value === 'inline-flex') {
+    const [display, direction] = result.value ?? []
+    const mainAxis = property === 'width' ? 'row' : 'column'
+    if ((display === 'flex' || display === 'inline-flex') && direction?.startsWith(mainAxis)) {
       await resolveFileLines([flexBasis])
       const via = flexBasis.via ? ` (via ${flexBasis.via})` : ''
       return `flex-basis: ${flexBasis.value}${via} @ ${fileRef(flexBasis)}`

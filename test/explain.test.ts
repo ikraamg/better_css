@@ -101,6 +101,17 @@ test('competing max-width rules — the note names the cascade winner', async ()
   expect(e.layoutNote).toContain('main.css:10')
 })
 
+test('column-flex parent: width is not governed by flex-basis — the max-width clamp is named', async () => {
+  // flex-basis sizes the MAIN axis; in a column container that's height, so the
+  // 200px basis is irrelevant to width — max-width: 200px is the true constraint
+  const e = await withPage(`${srv.url}/cascade/index.html`, (c) => explain(c, '.colchild', 'width'))
+  expect(e.declaredWinner).toBe('300px')
+  expect(e.computed).toBe('200px')
+  expect(e.layoutNote).not.toContain('flex-basis')
+  expect(e.layoutNote).toContain('max-width: 200px')
+  expect(e.layoutNote).toContain('main.css:12')
+})
+
 test('unknown selector throws with suggestions', async () => {
   await expect(withPage(`${srv.url}/cascade/index.html`, (c) => explain(c, '.sidbar', 'width')))
     .rejects.toThrow(/No element matches '\.sidbar'/)

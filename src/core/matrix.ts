@@ -42,7 +42,7 @@ export async function snapshotMatrix(
     checkInvariants(tree)
     return `saved ${saveSnapshot(renderTree(tree), `${name}@${vp.label}`, dir)}${busyNote(client)}`
   }, opts)
-  return results.map((r) => r.result).join('\n')
+  return results.map((r) => prefixLines(r.label, r.result)).join('\n')
 }
 
 // diff, once per viewport against its `<name>@WxH.tree` snapshot. A missing/mismatched
