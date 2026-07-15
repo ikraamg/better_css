@@ -122,8 +122,8 @@ Example `explain` output:
 2. Text clipped/truncated without `text-overflow` opt-in
 3. Visible elements overlapping unintentionally: boxes intersect, neither is
    an ancestor of the other, and neither element (nor an ancestor up to their
-   common parent) opts into layering via `position` + `z-index`, negative
-   margins, or transforms
+   common parent) opts into layering via a non-static `position` (with or
+   without `z-index`), negative margins, or transforms
 4. Zero-size or off-screen elements that are visible + interactive
 5. Element overflows its parent's padding box (content bleeding)
 6. Tap targets under 24px on interactive elements

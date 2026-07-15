@@ -1,0 +1,12 @@
+<!doctype html><html><head><style>* { margin: 0; }</style></head><body>
+<!-- two paths deliberately overlap; svg descendants are exempt from every invariant -->
+<svg width="200" height="200" viewBox="0 0 200 200">
+  <path d="M10 10 L100 10 L100 100 L10 100 Z" fill="red"></path>
+  <path d="M50 50 L150 50 L150 150 L50 150 Z" fill="blue"></path>
+</svg>
+<!-- svg element itself still participates: a tiny interactive wrapper must still be
+     a tap-target candidate even though its svg content is exempt -->
+<a href="#" style="display:block;width:16px;height:16px">
+  <svg width="16" height="16" viewBox="0 0 16 16"><path d="M0 0 L16 0 L16 16 Z" fill="green"></path></svg>
+</a>
+</body></html>

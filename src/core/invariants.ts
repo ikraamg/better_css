@@ -20,19 +20,33 @@ const INTERACTIVE = new Set(['a', 'button', 'input', 'select', 'textarea', 'summ
 interface Ctx {
   ignored(n: LayoutNode): boolean
   visible(n: LayoutNode): boolean
+  // true when any ancestor (not self) clips/scrolls horizontally or vertically —
+  // scrollable means reachable, clipped means managed (carousel); only zeroSize's
+  // off-screen branch consults this, the zero-dimension branch is unaffected
+  offscreenManaged(n: LayoutNode): boolean
 }
 
 function buildCtx(tree: BuiltTree): Ctx {
   const ignoredSet = new WeakSet<LayoutNode>()
   const opacityHidden = new WeakSet<LayoutNode>()
+  // svg descendants are exempt from every invariant (their layout is SVG-internal,
+  // not CSS box flow) — the svg element itself stays a normal participant
+  const svgDescendant = new WeakSet<LayoutNode>()
+  const offscreenManaged = new WeakSet<LayoutNode>()
   walk(tree.root, (n, parent) => {
     if ('data-bettercss-ignore' in n.attrs || (parent && ignoredSet.has(parent))) ignoredSet.add(n)
     if (parseFloat(n.styles['opacity'] ?? '1') <= 0 || (parent && opacityHidden.has(parent))) opacityHidden.add(n)
+    if (parent && (parent.tag === 'svg' || svgDescendant.has(parent))) svgDescendant.add(n)
+    if (parent) {
+      const parentClips = CLIPS_X.has(parent.styles['overflow-x'] ?? '') || CLIPS_X.has(parent.styles['overflow-y'] ?? '')
+      if (parentClips || offscreenManaged.has(parent)) offscreenManaged.add(n)
+    }
   })
   return {
-    ignored: (n) => ignoredSet.has(n),
+    ignored: (n) => ignoredSet.has(n) || svgDescendant.has(n),
     // visibility inherits in computed style; opacity does not, so propagate it down ourselves
     visible: (n) => n.styles['visibility'] !== 'hidden' && !opacityHidden.has(n),
+    offscreenManaged: (n) => offscreenManaged.has(n),
   }
 }
 
@@ -120,8 +134,9 @@ function zeroSize(tree: BuiltTree, out: Violation[], ctx: Ctx): void {
     if (ctx.ignored(n) || !ctx.visible(n) || !INTERACTIVE.has(n.tag)) return
     if (n.box.w === 0 || n.box.h === 0) {
       report(out, n, 'zero-size', `interactive ${selectorOf(n)} has zero size (${n.box.w}x${n.box.h})`, 'ZERO-SIZE')
-    } else if (n.box.x + n.box.w < 0 || n.box.y + n.box.h < 0 ||
-               n.box.x > Math.max(tree.viewport.width, tree.contentWidth)) {
+    } else if (!ctx.offscreenManaged(n) &&
+               (n.box.x + n.box.w < 0 || n.box.y + n.box.h < 0 ||
+                n.box.x > Math.max(tree.viewport.width, tree.contentWidth))) {
       report(out, n, 'zero-size', `interactive ${selectorOf(n)} is entirely off-screen at (${n.box.x},${n.box.y})`, 'OFF-SCREEN')
     }
   })
@@ -145,9 +160,10 @@ function textClip(tree: BuiltTree, out: Violation[], ctx: Ctx): void {
   })
 }
 
-// layering opt-in: positioned with explicit z-index, or transformed
+// layering opt-in: any non-static position (z-index or not — position alone says "I know
+// what I'm doing"), or transformed, or negative margin
 const layered = (n: LayoutNode) =>
-  ((n.styles['position'] ?? 'static') !== 'static' && (n.styles['z-index'] ?? 'auto') !== 'auto') ||
+  (n.styles['position'] ?? 'static') !== 'static' ||
   (n.styles['transform'] ?? 'none') !== 'none' ||
   ['margin-top', 'margin-right', 'margin-bottom', 'margin-left'].some((m) => parseFloat(n.styles[m] ?? '0') < 0)
 
@@ -232,7 +248,10 @@ export async function renderViolations(client: any, violations: Violation[]): Pr
   if (!violations.length) return 'no violations'
   const groups = new Map<string, Violation[]>()
   for (const v of violations) {
-    const key = `${v.rule} ${v.selector}`
+    // group by tag + classes, not the #id — three id-distinct instances of the same
+    // pattern (e.g. per-row vote buttons) are one signal, not three; the displayed
+    // line still shows the first violation's full selector (with its id)
+    const key = `${v.rule} ${v.selector.replace(/#[^.]+/, '')}`
     const group = groups.get(key)
     if (group) group.push(v)
     else groups.set(key, [v])

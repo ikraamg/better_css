@@ -79,3 +79,25 @@ test('renderViolations: same-parent children with different bleed amounts get no
   expect(lines[0]).toContain('×2')
   expect(lines[0]).not.toContain('across')
 })
+
+test('zero-size: off-screen inside an overflow-x:auto ancestor is not flagged — scrollable means reachable', async () => {
+  const violations = await violationsFor('/off-screen/index.html')
+  const zeros = violations.filter((v) => v.rule === 'zero-size')
+  expect(zeros.some((v) => v.selector.includes('off-scrolled'))).toBe(false)
+})
+
+test('zero-size: an unconditional off-screen element with no clipping ancestor stays flagged', async () => {
+  const violations = await violationsFor('/off-screen/index.html')
+  const zeros = violations.filter((v) => v.rule === 'zero-size')
+  expect(zeros.some((v) => v.selector.includes('off-unconditional'))).toBe(true)
+})
+
+test('renderViolations: group key drops ids so distinct-id tap targets collapse into one line', async () => {
+  const text = await withPage(`${srv.url}/carousel/index.html`, async (c) => {
+    const tree = buildTree(await extract(c))
+    return renderViolations(c, checkInvariants(tree))
+  })
+  const lines = text.split('\n').filter((l) => l.startsWith('tap-target') && l.includes('vote'))
+  expect(lines).toHaveLength(1)
+  expect(lines[0]).toContain('×3')
+})

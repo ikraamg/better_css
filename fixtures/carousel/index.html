@@ -30,4 +30,10 @@ body { overflow-x: hidden; }
   <div class="leak" style="width:250px"></div>
   <div class="leak" style="width:260px"></div>
 </div>
+<!-- three undersized tap targets sharing tag+classes but distinct ids — grouping
+     must collapse them into one line, not one per id. margin-top clears the second
+     .leak div above, which vertically bleeds 20px past .shared-parent's own box. -->
+<a id="up_1" class="vote" href="#" style="display:block;width:16px;height:16px;margin-top:30px">up_1</a>
+<a id="up_2" class="vote" href="#" style="display:block;width:16px;height:16px">up_2</a>
+<a id="up_3" class="vote" href="#" style="display:block;width:16px;height:16px">up_3</a>
 </body></html>
