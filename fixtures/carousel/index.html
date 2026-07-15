@@ -9,6 +9,12 @@ body { overflow-x: hidden; }
 .wide-parent-c { width: 200px; height: 50px; }
 .wide-item { width: 300px; height: 50px; background: teal; }
 .icon { display: inline-block; width: 16px; height: 16px; background: gold; }
+/* class name itself contains a px-looking token, to poison a message-regex px scan */
+[class*="w-["] { width: 300px; height: 30px; background: purple; }
+.px-parent-a { width: 150px; height: 40px; }
+.px-parent-b { width: 170px; height: 40px; }
+.shared-parent { width: 200px; height: 40px; }
+.leak { height: 30px; }
 </style></head><body>
 <div class="wrapper"><div class="track">
   <div class="card"></div><div class="card"></div><div class="card"></div><div class="card"></div>
@@ -18,4 +24,10 @@ body { overflow-x: hidden; }
 <div class="wide-parent-b"><div class="wide-item"></div></div>
 <div class="wide-parent-c"><div class="wide-item"></div></div>
 <a class="icon" href="#"></a><a class="icon" href="#"></a><a class="icon" href="#"></a>
+<div class="px-parent-a"><div class="w-[300px]"></div></div>
+<div class="px-parent-b"><div class="w-[300px]"></div></div>
+<div class="shared-parent">
+  <div class="leak" style="width:250px"></div>
+  <div class="leak" style="width:260px"></div>
+</div>
 </body></html>

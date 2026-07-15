@@ -6,6 +6,13 @@ export interface Violation {
   selector: string
   message: string
   backendNodeId: number
+  // structured scalar amount for rules whose message leads with a single px value
+  // (viewport-overflow, parent-bleed, text-clip) — grouping reads this instead of
+  // regex-scraping the message, which a px-looking class name (e.g. w-[300px]) can poison
+  px?: number
+  // the offending element's parent, set where a parent is known (parent-bleed at minimum) —
+  // grouping uses this to detect a group spanning distinct parents
+  parentSelector?: string
 }
 
 const INTERACTIVE = new Set(['a', 'button', 'input', 'select', 'textarea', 'summary'])
@@ -29,8 +36,11 @@ function buildCtx(tree: BuiltTree): Ctx {
   }
 }
 
-function report(out: Violation[], n: LayoutNode, rule: Violation['rule'], message: string, warning: string): void {
-  out.push({ rule, selector: selectorOf(n), message, backendNodeId: n.backendNodeId })
+function report(
+  out: Violation[], n: LayoutNode, rule: Violation['rule'], message: string, warning: string,
+  extra?: { px?: number; parentSelector?: string },
+): void {
+  out.push({ rule, selector: selectorOf(n), message, backendNodeId: n.backendNodeId, ...extra })
   n.warnings.push(warning)
 }
 
@@ -49,7 +59,7 @@ function viewportOverflow(tree: BuiltTree, out: Violation[], ctx: Ctx): void {
   if (!c) return // only ignored/hidden elements overflow -> suppressed
   report(out, c, 'viewport-overflow',
     `page overflows viewport horizontally by ${over}px; widest element is ${selectorOf(c)} (right edge ${c.box.x + c.box.w}px > ${tree.viewport.width}px)`,
-    `H-OVERFLOW:+${over}px`)
+    `H-OVERFLOW:+${over}px`, { px: over })
 }
 
 const CLIPS_X = new Set(['auto', 'scroll', 'hidden', 'clip'])
@@ -76,6 +86,8 @@ function checkBleed(n: LayoutNode, ancestors: LayoutNode[], out: Violation[]): v
   let visRight = n.box.x + n.box.w
   let visLeft = n.box.x
   if (clip) {
+    // heuristic ceiling: a positioned/transformed descendant whose containing block sits
+    // above `clip` can still visibly escape it — this clamp intentionally ignores that case
     const clipBox = padBoxOf(clip)
     visRight = Math.min(visRight, clipBox.right)
     visLeft = Math.max(visLeft, clipBox.left)
@@ -84,7 +96,7 @@ function checkBleed(n: LayoutNode, ancestors: LayoutNode[], out: Violation[]): v
   if (over > 1) {
     report(out, n, 'parent-bleed',
       `${selectorOf(n)} bleeds ${over}px outside ${selectorOf(parent)} (child ${n.box.w}px wide, parent ${parent.box.w}px)`,
-      `BLEED:+${over}px`)
+      `BLEED:+${over}px`, { px: over, parentSelector: selectorOf(parent) })
   }
 }
 
@@ -128,7 +140,7 @@ function textClip(tree: BuiltTree, out: Violation[], ctx: Ctx): void {
       const snippet = (n.text ?? '').slice(0, 12)
       report(out, n, 'text-clip',
         `text "${snippet}…" clipped in ${selectorOf(n)}: text extends to ${textRight}px, container inner edge at ${innerRight}px, no text-overflow opt-in`,
-        `CLIP:"${snippet}…"`)
+        `CLIP:"${snippet}…"`, { px: textRight - innerRight })
     }
   })
 }
@@ -203,18 +215,13 @@ export function checkInvariants(tree: BuiltTree): Violation[] {
 // browser overrode — worth naming the source rule for.
 const SUSPECT_RULES = new Set<Violation['rule']>(['viewport-overflow', 'parent-bleed', 'text-clip'])
 
-// Rules whose message leads with a single scalar px amount; WxH-style messages
-// (tap-target "16x16px", overlap "10x8px") would misparse into a bogus range.
-const SCALAR_RULES = new Set<Violation['rule']>(['viewport-overflow', 'parent-bleed', 'text-clip'])
-
 function groupSuffix(group: Violation[]): string {
   if (group.length < 2) return ''
-  if (!SCALAR_RULES.has(group[0].rule)) return ` (×${group.length} similar)`
-  const pxs = group.map((v) => v.message.match(/(\d+)px/)?.[1]).filter((x): x is string => x !== undefined).map(Number)
-  const range = pxs.length ? `${Math.min(...pxs)}–${Math.max(...pxs)}px` : `${group.length} elements`
-  // ponytail: differing messages ≈ differing parents; parse the parent out of the message if this ever over-counts
-  const differ = group.some((v) => v.message !== group[0].message)
-  return ` (×${group.length}, ${range}${differ ? ` across ${group.length} parents` : ''})`
+  if (!group.every((v) => v.px !== undefined)) return ` (×${group.length} similar)`
+  const pxs = group.map((v) => v.px as number)
+  const range = `${Math.min(...pxs)}–${Math.max(...pxs)}px`
+  const distinctParents = new Set(group.map((v) => v.parentSelector).filter((p): p is string => p !== undefined))
+  return ` (×${group.length}, ${range}${distinctParents.size >= 2 ? ` across ${distinctParents.size} parents` : ''})`
 }
 
 // Renders violations for CLI/MCP output, appending a `suspect:` line naming the

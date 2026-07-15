@@ -53,3 +53,29 @@ test('renderViolations: dimension-style messages group with a count, no fabricat
   // /(\d+)px/ against "is 16x16px" would fabricate a 16–16px "range" — must not appear
   expect(lines[0]).not.toContain('16–16px')
 })
+
+test('renderViolations: a px-looking class name does not poison the range (structured px, not message regex)', async () => {
+  const text = await withPage(`${srv.url}/carousel/index.html`, async (c) => {
+    const tree = buildTree(await extract(c))
+    return renderViolations(c, checkInvariants(tree))
+  })
+  // selector renders as div.w-[300px] — its class contains "300px" ahead of the real
+  // bleed amount in the message, which a message-regex scan would grab instead
+  const lines = text.split('\n').filter((l) => l.startsWith('parent-bleed') && l.includes('div.w-[300px]'))
+  expect(lines).toHaveLength(1)
+  expect(lines[0]).toContain('×2')
+  expect(lines[0]).toContain('130')
+  expect(lines[0]).toContain('150')
+  expect(lines[0]).not.toContain('300–300px')
+})
+
+test('renderViolations: same-parent children with different bleed amounts get no across-parents qualifier', async () => {
+  const text = await withPage(`${srv.url}/carousel/index.html`, async (c) => {
+    const tree = buildTree(await extract(c))
+    return renderViolations(c, checkInvariants(tree))
+  })
+  const lines = text.split('\n').filter((l) => l.startsWith('parent-bleed') && l.includes('div.leak'))
+  expect(lines).toHaveLength(1)
+  expect(lines[0]).toContain('×2')
+  expect(lines[0]).not.toContain('across')
+})
