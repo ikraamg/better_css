@@ -1,0 +1,5 @@
+* { margin: 0; box-sizing: border-box; }
+.rail { width: 300px; height: 60px; background: #eee; }
+.cta { display: block; width: 200px; height: 40px; background: steelblue; }
+.cta:hover { width: 400px; }
+.cta:focus { outline: 4px solid orange; min-height: 60px; }

@@ -7,6 +7,7 @@ import { explain, renderExplanation } from './core/explain.js'
 import { inspect } from './core/inspect.js'
 import { diffTrees, loadSnapshot, renderDiff, saveSnapshot } from './core/snapshot.js'
 import { checkMatrix, diffMatrix, snapshotMatrix } from './core/matrix.js'
+import { forcePseudoStates, type PseudoStates } from './core/state.js'
 
 const USAGE = `bettercss <command> <url> [options]
   layout    <url> [--selector S] [--depth N]   print the LayoutTree (budgeted to 400 lines unless --depth is given)
@@ -17,7 +18,9 @@ const USAGE = `bettercss <command> <url> [options]
   diff      <url> --name NAME [--dir DIR]      diff current layout vs snapshot
   options: --port N (attach to Chrome at port N instead of 9222/headless)
            --viewport WxH (emulated viewport size, e.g. 1280x800)
-           --viewports W1xH1,W2xH2,... (check/snapshot/diff once per viewport)`
+           --viewports W1xH1,W2xH2,... (check/snapshot/diff once per viewport)
+           --hover S, --focus S, --active S (force a pseudo-state on selector S;
+             layout/inspect/explain/check only, not snapshot/diff)`
 
 function flags(argv: string[]): Record<string, string> {
   const out: Record<string, string> = {}
@@ -48,6 +51,11 @@ async function main(): Promise<number> {
       return 2
     }
   }
+  const stateFlags = (['hover', 'focus', 'active'] as const).filter((k) => f[k] !== undefined)
+  if (stateFlags.length && !['layout', 'inspect', 'explain', 'check'].includes(cmd)) {
+    console.error(`--${stateFlags[0]} is only valid for layout/inspect/explain/check, not ${cmd} — forced-state snapshots invite stale-state confusion.`)
+    return 2
+  }
   for (const name of ['depth', 'port']) {
     if (f[name] !== undefined && Number.isNaN(Number(f[name]))) {
       console.error(`--${name} must be a number, got '${f[name]}'`)
@@ -64,6 +72,10 @@ async function main(): Promise<number> {
     try { viewports = parseViewportList(f.viewports) }
     catch (err) { console.error((err as Error).message); return 2 }
   }
+  if (stateFlags.length && viewports) {
+    console.error(`--${stateFlags[0]} is not supported together with --viewports yet.`)
+    return 2
+  }
   const opts = { port: f.port ? Number(f.port) : undefined, viewport }
 
   if (viewports && ['check', 'snapshot', 'diff'].includes(cmd)) {
@@ -79,7 +91,9 @@ async function main(): Promise<number> {
     return Number(process.exitCode ?? 0)
   }
 
+  const states: PseudoStates = { hover: f.hover, focus: f.focus, active: f.active }
   const output = await withPage(url, async (client) => {
+    await forcePseudoStates(client, states)
     switch (cmd) {
       case 'layout': {
         const tree = buildTree(await extract(client))

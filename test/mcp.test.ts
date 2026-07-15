@@ -62,6 +62,16 @@ test('check tool reports violations with a suspect rule', async () => {
   expect(text).toMatch(/suspect: width: 1400px/)
 }, 60_000)
 
+test('check tool with hover param forces the state and surfaces the parent-bleed', async () => {
+  const clean = await client.callTool({ name: 'check', arguments: { url: `${srv.url}/hover/index.html` } })
+  expect((clean.content as any)[0].text).toContain('no violations')
+
+  const res = await client.callTool({ name: 'check', arguments: { url: `${srv.url}/hover/index.html`, hover: '.cta' } })
+  const text = (res.content as any)[0].text
+  expect(text).toContain('parent-bleed')
+  expect(text).toContain('100px')
+}, 60_000)
+
 test('check tool with viewports checks each viewport and prefixes violations with [WxH]', async () => {
   const res = await client.callTool({
     name: 'check',

@@ -81,6 +81,44 @@ test('check --viewports checks each viewport and prefixes violations with [WxH]'
   expect(err.stdout).toContain('checked 2 viewports: 1280x800=clean, 600x800=2 violations')
 }, 60_000)
 
+test('check on the hover fixture is clean by default; --hover forces the state and surfaces the parent-bleed', async () => {
+  const { stdout } = await cli('check', `${srv.url}/hover/index.html`)
+  expect(stdout).toContain('no violations')
+
+  const err = await cli('check', `${srv.url}/hover/index.html`, '--hover', '.cta').catch((e) => e)
+  expect(err.code).toBe(1)
+  expect(err.stdout).toContain('parent-bleed')
+  expect(err.stdout).toContain('100px')
+}, 60_000)
+
+test('layout --hover forces the state, changing width; without it, the natural width shows', async () => {
+  const { stdout: hovered } = await cli('layout', `${srv.url}/hover/index.html`, '--hover', '.cta')
+  expect(hovered).toContain('a.cta (0,0 400x40)')
+
+  const { stdout: natural } = await cli('layout', `${srv.url}/hover/index.html`)
+  expect(natural).toContain('a.cta (0,0 200x40)')
+}, 60_000)
+
+test('explain --hover names the :hover rule as the cascade winner', async () => {
+  const { stdout } = await cli('explain', `${srv.url}/hover/index.html`, '--hover', '.cta', '--selector', '.cta', '--property', 'width')
+  expect(stdout).toContain('✓ width: 400px')
+  expect(stdout).toContain('.cta:hover')
+  expect(stdout).toMatch(/main\.css:\d+/)
+}, 60_000)
+
+test('forced-hover layout is byte-identical across two invocations', async () => {
+  const { stdout: first } = await cli('layout', `${srv.url}/hover/index.html`, '--hover', '.cta')
+  const { stdout: second } = await cli('layout', `${srv.url}/hover/index.html`, '--hover', '.cta')
+  expect(first).toBe(second)
+}, 60_000)
+
+test('--hover is rejected for snapshot and diff (out of scope in v1)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bettercss-test-'))
+  const err = await cli('snapshot', `${srv.url}/hover/index.html`, '--name', 'x', '--dir', dir, '--hover', '.cta').catch((e) => e)
+  expect(err.code).toBe(2)
+  expect(err.stderr).toContain('--hover')
+}, 60_000)
+
 test('snapshot --viewports then diff --viewports round-trips clean, then shows a prefixed diff on change', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'bettercss-test-'))
   const workDir = mkdtempSync(join(tmpdir(), 'bettercss-fixture-'))

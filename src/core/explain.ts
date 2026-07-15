@@ -51,7 +51,7 @@ async function loadMap(sheetURL: string, mapURL: string): Promise<SourceMap | nu
   return mapCache.get(abs)!
 }
 
-async function collectSheets(client: any): Promise<Map<string, SheetInfo>> {
+export async function collectSheets(client: any): Promise<Map<string, SheetInfo>> {
   const cached = sheetCache.get(client)
   if (cached) return cached
   const sheets = new Map<string, SheetInfo>()
@@ -72,9 +72,27 @@ async function collectSheets(client: any): Promise<Map<string, SheetInfo>> {
   return sheets
 }
 
+// DOM.getDocument reissues fresh nodeIds for the whole document on every call, even with
+// nothing structurally changed — a node re-resolved via a second call gets a different id
+// than the same physical element got from the first, orphaning anything keyed to the old
+// one. Verified empirically: this silently breaks CSS.forcePseudoState (src/core/state.ts)
+// — a rule that matches under the original nodeId is gone from getMatchedStylesForNode
+// under a freshly re-resolved one for the very same element. Caching the root per client —
+// one getDocument call per page, same pattern as sheetCache below for CSS.enable — keeps
+// every resolveNode/resolveBackendNode call in a page's lifetime on the same nodeIds.
+const rootCache = new WeakMap<object, Promise<number>>()
+
+function getRoot(client: any): Promise<number> {
+  const cached = rootCache.get(client)
+  if (cached) return cached
+  const root: Promise<number> = client.DOM.getDocument({ depth: -1 }).then((r: any) => r.root.nodeId)
+  rootCache.set(client, root)
+  return root
+}
+
 export async function resolveNode(client: any, selector: string): Promise<number> {
-  const { root } = await client.DOM.getDocument({ depth: -1 })
-  const { nodeId } = await client.DOM.querySelector({ nodeId: root.nodeId, selector }).catch(() => ({ nodeId: 0 }))
+  const rootNodeId = await getRoot(client)
+  const { nodeId } = await client.DOM.querySelector({ nodeId: rootNodeId, selector }).catch(() => ({ nodeId: 0 }))
   if (nodeId) return nodeId
   // suggestions: all class/id selectors present on the page
   const { result } = await client.Runtime.evaluate({
@@ -91,7 +109,7 @@ export async function resolveNode(client: any, selector: string): Promise<number
 // the session first — verified empirically, it otherwise throws "Document needs to
 // be requested first". A nodeId of 0 means the backend node no longer exists.
 async function resolveBackendNode(client: any, backendNodeId: number): Promise<number> {
-  await client.DOM.getDocument({ depth: 0 })
+  await getRoot(client)
   const { nodeIds } = await client.DOM.pushNodesByBackendIdsToFrontend({ backendNodeIds: [backendNodeId] })
   if (!nodeIds[0]) throw new Error(`backendNodeId ${backendNodeId} no longer exists in the document (stale)`)
   return nodeIds[0]

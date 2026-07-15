@@ -10,6 +10,7 @@ import { explain, renderExplanation } from './core/explain.js'
 import { inspect } from './core/inspect.js'
 import { diffTrees, loadSnapshot, renderDiff, saveSnapshot } from './core/snapshot.js'
 import { checkMatrix, diffMatrix, snapshotMatrix } from './core/matrix.js'
+import { forcePseudoStates, type PseudoStates } from './core/state.js'
 
 const server = new McpServer({ name: 'bettercss', version: '0.1.0' })
 
@@ -18,22 +19,28 @@ const url = z.string().describe('Page URL (usually your dev server)')
 const port = z.number().optional().describe('Chrome debugging port (default: 9222 or auto-launched headless)')
 const viewport = z.string().optional().describe('Emulated viewport size as WxH, e.g. 1280x800 (default: 1280x800)')
 const viewports = z.string().optional().describe('Comma-separated WxH list, e.g. "600x800,1280x800" — runs once per viewport, prefixing each output line with [WxH] (check/snapshot/diff only; overrides viewport when given)')
+// see the layout consequences of interaction states without a mouse — layout/inspect/explain/check only,
+// not snapshot/diff (forced-state snapshots invite stale-state confusion)
+const hover = z.string().optional().describe('Force :hover on this selector before reading the page')
+const focus = z.string().optional().describe('Force :focus on this selector before reading the page')
+const active = z.string().optional().describe('Force :active on this selector before reading the page')
 
 function page(
   u: string,
-  opts: { port?: number; viewport?: string },
+  opts: { port?: number; viewport?: string; states?: PseudoStates },
   fn: (client: any) => Promise<string>,
 ) {
   return withPage(u, async (client) => {
+    if (opts.states) await forcePseudoStates(client, opts.states)
     let out = await fn(client)
     if (pageWasBusy(client)) out += '\nnote: page was still loading at the 10s cap; results may be early'
     return text(out)
   }, { port: opts.port, viewport: opts.viewport ? parseViewport(opts.viewport) : undefined })
 }
 
-server.tool('layout', 'Compact deterministic layout tree of the rendered page: positions, sizes, layout modes, inline ⚠ warnings. THE ground-truth view — read this before and after CSS changes. Budgeted to 400 lines by default (auto-truncated to the deepest depth that fits, with a note); pass depth to see the full tree from the root, or selector to scope to a subtree.',
-  { url, port, viewport, selector: z.string().optional().describe('Scope to this element'), depth: z.number().optional().describe('Max tree depth (disables the default 400-line budget)') },
-  ({ url: u, port: p, viewport: v, selector, depth }) => page(u, { port: p, viewport: v }, async (client) => {
+server.tool('layout', 'Compact deterministic layout tree of the rendered page: positions, sizes, layout modes, inline ⚠ warnings. THE ground-truth view — read this before and after CSS changes. Budgeted to 400 lines by default (auto-truncated to the deepest depth that fits, with a note); pass depth to see the full tree from the root, or selector to scope to a subtree. Pass hover/focus/active to see the layout consequences of interaction states without a mouse.',
+  { url, port, viewport, selector: z.string().optional().describe('Scope to this element'), depth: z.number().optional().describe('Max tree depth (disables the default 400-line budget)'), hover, focus, active },
+  ({ url: u, port: p, viewport: v, selector, depth, hover: h, focus: fo, active: a }) => page(u, { port: p, viewport: v, states: { hover: h, focus: fo, active: a } }, async (client) => {
     const tree = buildTree(await extract(client))
     checkInvariants(tree)
     const from = selector ? findNode(tree, selector) : undefined
@@ -41,23 +48,26 @@ server.tool('layout', 'Compact deterministic layout tree of the rendered page: p
     return renderTree(tree, { depth, from, budget: depth === undefined ? 400 : undefined })
   }))
 
-server.tool('inspect', 'Deep-dive ONE element: box model, every non-default computed style, stacking context, and why it has its width/height.',
-  { url, port, viewport, selector: z.string().describe('CSS selector of the element') },
-  ({ url: u, port: p, viewport: v, selector }) => page(u, { port: p, viewport: v }, (client) => inspect(client, selector)))
+server.tool('inspect', 'Deep-dive ONE element: box model, every non-default computed style, stacking context, and why it has its width/height. Pass hover/focus/active to see the layout consequences of interaction states without a mouse.',
+  { url, port, viewport, selector: z.string().describe('CSS selector of the element'), hover, focus, active },
+  ({ url: u, port: p, viewport: v, selector, hover: h, focus: fo, active: a }) => page(u, { port: p, viewport: v, states: { hover: h, focus: fo, active: a } }, (client) => inspect(client, selector)))
 
-server.tool('explain', 'Trace one CSS property to its source: which rule wins (file:line, source-mapped), which rules lost and why (specificity/order/importance), and whether layout constraints override the declared value.',
-  { url, port, viewport, selector: z.string(), property: z.string().describe("e.g. 'width'") },
-  ({ url: u, port: p, viewport: v, selector, property }) => page(u, { port: p, viewport: v }, async (client) =>
+server.tool('explain', 'Trace one CSS property to its source: which rule wins (file:line, source-mapped), which rules lost and why (specificity/order/importance), and whether layout constraints override the declared value. Pass hover/focus/active to see the layout consequences of interaction states without a mouse.',
+  { url, port, viewport, selector: z.string(), property: z.string().describe("e.g. 'width'"), hover, focus, active },
+  ({ url: u, port: p, viewport: v, selector, property, hover: h, focus: fo, active: a }) => page(u, { port: p, viewport: v, states: { hover: h, focus: fo, active: a } }, async (client) =>
     renderExplanation(await explain(client, selector, property))))
 
-server.tool('check', 'Run layout invariants (overflow, bleed, clipped text, unintended overlap, zero-size/tiny interactive elements). Violations are ALWAYS bugs — fix them.',
-  { url, port, viewport, viewports },
-  ({ url: u, port: p, viewport: v, viewports: vs }) => vs
-    ? checkMatrix(u, parseViewportList(vs), { port: p }).then((r) => text(r.output))
-    : page(u, { port: p, viewport: v }, async (client) => {
-      const violations = checkInvariants(buildTree(await extract(client)))
-      return renderViolations(client, violations)
-    }))
+server.tool('check', 'Run layout invariants (overflow, bleed, clipped text, unintended overlap, zero-size/tiny interactive elements). Violations are ALWAYS bugs — fix them. Pass hover/focus/active to see the layout consequences of interaction states without a mouse (not combinable with viewports yet).',
+  { url, port, viewport, viewports, hover, focus, active },
+  ({ url: u, port: p, viewport: v, viewports: vs, hover: h, focus: fo, active: a }) => {
+    if (vs && (h || fo || a)) throw new Error('hover/focus/active are not supported together with viewports yet.')
+    return vs
+      ? checkMatrix(u, parseViewportList(vs), { port: p }).then((r) => text(r.output))
+      : page(u, { port: p, viewport: v, states: { hover: h, focus: fo, active: a } }, async (client) => {
+        const violations = checkInvariants(buildTree(await extract(client)))
+        return renderViolations(client, violations)
+      })
+  })
 
 server.tool('snapshot', 'Lock the current layout as a named .tree snapshot for later diffing. Do this when the page looks CORRECT.',
   { url, port, viewport, viewports, name: z.string(), dir: z.string().optional().describe("Snapshot dir (default .bettercss relative to the MCP server's working directory — pass an absolute path when the server isn't launched from your project root)") },
