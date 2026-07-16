@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from 'vitest'
-import { cpSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { cpSync, mkdtempSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { serveFixtures } from './helpers/server.js'
@@ -201,6 +201,69 @@ test('a source-mapped suspect resolves and patches the ORIGINAL source file, not
     // the generated file actually served to the browser is untouched — a source-map fix
     // patches the original, it does not (and cannot) rebuild
     expect(readFileSync(join(workDir, 'fixable-mapped/built.css'), 'utf8')).not.toContain('text-overflow')
+  } finally {
+    tmpSrv.close()
+  }
+})
+
+// Safety bar: lexical containment isn't containment — a symlink INSIDE root pointing outside
+// passes a startsWith check while the write physically lands outside. Real paths must be checked.
+test('a symlink inside --root pointing outside is refused; the outside file is never written', async () => {
+  const outside = mkdtempSync(join(tmpdir(), 'bettercss-fix-outside-'))
+  cpSync('fixtures/fixable', join(outside, 'fixable'), { recursive: true })
+  const outsideCss = join(outside, 'fixable/styles.css')
+  const before = readFileSync(outsideCss, 'utf8')
+
+  const root = mkdtempSync(join(tmpdir(), 'bettercss-fix-symroot-'))
+  symlinkSync(join(outside, 'fixable'), join(root, 'fixable'))
+
+  const tmpSrv = await serveFixtures(outside)
+  try {
+    const url = `${tmpSrv.url}/fixable/index.html`
+    const outcomes = await withPage(url, async (client) => {
+      const violations = checkInvariants(buildTree(await extract(client)))
+      return buildFixes(client, url, violations, root)
+    })
+    for (const o of outcomes) {
+      expect(o.kind).toBe('skip')
+      expect((o as Extract<FixOutcome, { kind: 'skip' }>).reason).toContain('outside --root')
+    }
+    applyFixes(outcomes)
+    expect(readFileSync(outsideCss, 'utf8')).toBe(before)
+  } finally {
+    tmpSrv.close()
+  }
+})
+
+// Stale guard scoping must be EXACT selector match: substring matching lets a prefix-named
+// decoy rule (.real-clip-outer) stand in for the drifted suspect (.real-clip) — silently
+// patching the WRONG rule and masking the drift.
+test('stale guard: a prefix-named decoy rule is never patched in place of the drifted suspect', async () => {
+  const served = mkdtempSync(join(tmpdir(), 'bettercss-fix-decoy-served-'))
+  writeFileSync(join(served, 'index.html'),
+    '<!doctype html><html><head><link rel="stylesheet" href="styles.css"></head><body><div class="real-clip">This text is definitely longer than 120 pixels of monospace</div></body></html>')
+  const cleanCss = '* { margin: 0; font-family: monospace; }\n.real-clip { width: 120px; overflow: hidden; white-space: nowrap; }\n.real-clip-outer { width: 300px; overflow: hidden; }\n'
+  writeFileSync(join(served, 'styles.css'), cleanCss)
+
+  // --root copy: the suspect's own declaration drifted; the decoy (within ±3 lines, same
+  // declaration text, prefix-sharing selector) is intact
+  const root = mkdtempSync(join(tmpdir(), 'bettercss-fix-decoy-root-'))
+  const driftedCss = cleanCss.replace('.real-clip { width: 120px; overflow: hidden;', '.real-clip { width: 120px; overflow: scroll;')
+  writeFileSync(join(root, 'styles.css'), driftedCss)
+
+  const tmpSrv = await serveFixtures(served)
+  try {
+    const url = `${tmpSrv.url}/index.html`
+    const outcomes = await withPage(url, async (client) => {
+      const violations = checkInvariants(buildTree(await extract(client)))
+      return buildFixes(client, url, violations.filter((v) => v.rule === 'text-clip'), root)
+    })
+
+    const clipSkip = skipFor(outcomes, 'text-clip')
+    expect(clipSkip.reason).toContain('stale source')
+
+    applyFixes(outcomes)
+    expect(readFileSync(join(root, 'styles.css'), 'utf8')).toBe(driftedCss) // decoy untouched
   } finally {
     tmpSrv.close()
   }

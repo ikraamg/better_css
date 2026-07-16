@@ -430,3 +430,28 @@ test('fix --apply on a temp copy writes patches, reports before/after honestly, 
     tmpSrv.close()
   }
 }, 60_000)
+
+// Regression honesty: a patch that trades one violation for a NEW one must NOT exit 0.
+// The regressing fixture is built for exactly this: max-width: 100% cures the bleed but
+// shrinks the box below its text width, introducing a text-clip.
+test('fix --apply that introduces a NEW violation reports it and exits 1', async () => {
+  const workDir = mkdtempSync(join(tmpdir(), 'bettercss-cli-fix-regress-'))
+  cpSync('fixtures/regressing', join(workDir, 'regressing'), { recursive: true })
+  const tmpSrv = await serveFixtures(workDir)
+  try {
+    const err = await cli('fix', `${tmpSrv.url}/regressing/index.html`, '--root', workDir, '--apply').catch((e) => e)
+    expect(err.code).toBe(1)
+    expect(err.stdout).toContain('before: 1 violations → after: 1 violations')
+    expect(err.stdout).toContain('NEW violations introduced')
+    expect(err.stdout).toContain('text-clip')
+  } finally {
+    tmpSrv.close()
+  }
+}, 60_000)
+
+// Zero-patches --apply semantics: nothing attempted is not failure — exit 0, say so plainly.
+test('fix --apply with nothing fixable exits 0 with "no patches applied"', async () => {
+  const { stdout } = await cli('fix', `${srv.url}/zero-size/index.html`, '--root', 'fixtures', '--apply')
+  expect(stdout).toContain('no mechanical fix for zero-size')
+  expect(stdout).toContain('no patches applied')
+}, 60_000)

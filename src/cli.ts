@@ -36,7 +36,10 @@ const USAGE = `bettercss <command> <url> [options]
                                                 still apply), then re-runs check and prints
                                                 "before: N violations -> after: M violations" plus
                                                 any NEW violations the patch introduced. Exit 0 only
-                                                if M < N and no new violations. --selector limits
+                                                if M < N and no new violations — except when nothing
+                                                was fixable at all: then --apply exits 0 with "no
+                                                patches applied" (nothing attempted is not failure)
+                                                and no re-check runs. --selector limits
                                                 which violations are attempted. Inline <style>/style=
                                                 suspects are never patchable (refused, with the
                                                 page:line to hand-edit). Accepts --viewport/--hover/

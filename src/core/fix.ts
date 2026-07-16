@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { resolve as resolvePath, sep } from 'node:path'
 import { explain, type CascadeEntry } from './explain.js'
 import type { Violation } from './invariants.js'
@@ -55,8 +55,15 @@ export function resolveSuspectFile(fileRef: string, sheetURL: string, root: stri
   const abs = new URL(fileRef, sheetURL)
   const rootAbs = resolvePath(root)
   const target = resolvePath(rootAbs, '.' + decodeURIComponent(abs.pathname))
-  if (target !== rootAbs && !target.startsWith(rootAbs + sep)) {
+  const contained = (path: string, boundary: string) => path === boundary || path.startsWith(boundary + sep)
+  if (!contained(target, rootAbs)) {
     throw new Error(`refusing to write outside --root: '${fileRef}' resolves to ${target}`)
+  }
+  // Lexical containment isn't containment: a symlink INSIDE root can point anywhere. fix only
+  // ever patches EXISTING files, so when the target exists, realpath BOTH sides and re-check
+  // on the real paths (root too — /tmp itself is a symlink on macOS).
+  if (existsSync(target) && !contained(realpathSync(target), realpathSync(rootAbs))) {
+    throw new Error(`refusing to write outside --root: '${fileRef}' is a symlink escaping to ${realpathSync(target)}`)
   }
   return target
 }
@@ -80,15 +87,19 @@ function ruleSelectorAt(lines: string[], lineIdx: number): string {
 }
 
 // Finds a line within `expected ± 3` whose text matches `needle` AND sits inside a rule block
-// for `ruleSelector` — the stale-source guard. Concurrent edits can shift a rule by a few
+// whose selector list contains `ruleSelector` EXACTLY (split on commas, trimmed, case-sensitive
+// — substring matching would let a prefix-named decoy like `.real-clip-outer` stand in for
+// `.real-clip` and silently patch the wrong rule). Concurrent edits can shift a rule by a few
 // lines without actually invalidating the suspect; anything further off, a total miss, or a
 // same-property match that belongs to a DIFFERENT rule (e.g. two rules that both set
 // `overflow: hidden`), means the file has drifted since Chrome analyzed it.
 function findLine(lines: string[], expected: number, needle: RegExp, ruleSelector: string): number | null {
+  const sel = ruleSelector.trim()
   for (let d = 0; d <= 3; d++) {
     for (const cand of d === 0 ? [expected] : [expected - d, expected + d]) {
       if (cand < 1 || cand > lines.length) continue
-      if (needle.test(lines[cand - 1]) && ruleSelectorAt(lines, cand - 1).includes(ruleSelector.trim())) return cand
+      if (!needle.test(lines[cand - 1])) continue
+      if (ruleSelectorAt(lines, cand - 1).split(',').some((s) => s.trim() === sel)) return cand
     }
   }
   return null
