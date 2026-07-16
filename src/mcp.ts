@@ -14,6 +14,7 @@ import { verifyMatrix } from './core/verify.js'
 import { forcePseudoStates, type PseudoStates } from './core/state.js'
 import { hasInteractSteps, interactWasUnsettled, runInteractSteps, type InteractSteps } from './core/interact.js'
 import { animateNote, needsAnimationCapture, settleAnimations, type AnimateOpts } from './core/animate.js'
+import { measureStability, renderStability } from './core/stability.js'
 
 const server = new McpServer({ name: 'bettercss', version: '0.1.0' })
 
@@ -117,6 +118,11 @@ server.tool('verify', `Composite one-shot "is this page correct": runs layout in
       animate: needsAnimationCapture(animate) ? animate : undefined, name, dir,
     }).then((r) => text(r.output))
   })
+
+server.tool('stability', 'Load-time layout-shift report (Cumulative Layout Shift): waits `duration` ms (default 3000) past load, then reports every shift — timing, the moved element\'s selector, its before/after box, and its score — plus any img/video shift source missing width/height attributes (the #1 CLS cause). First line is always STABILITY: <score> (threshold <t>). TIMING-DEPENDENT: this is an OBSERVATION, not a deterministic snapshot — local dev servers under-report; throttle CPU/network to reproduce production shifts. No interact/state/settled params (out of scope) or viewports (single viewport only).',
+  { url, port, viewport, duration: z.number().optional().describe('Milliseconds to observe past load before collecting shifts (default 3000)'), threshold: z.number().optional().describe('Score above which this is reported as unstable (default 0.1, the Core Web Vitals "good" boundary)') },
+  ({ url: u, port: p, viewport: v, duration, threshold }) =>
+    measureStability(u, { port: p, viewport: v ? parseViewport(v) : undefined, duration, threshold }).then((r) => text(renderStability(r))))
 
 // Every session launches its own headless Chrome + temp profile (src/core/connect.ts);
 // without this, exiting the MCP session leaks both. Cover both ways a session ends:

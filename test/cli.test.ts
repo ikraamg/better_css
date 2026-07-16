@@ -341,3 +341,36 @@ test('verify --settled passes the flag through, failing with the exact 100px ble
   expect(err.stdout.split('\n')[0]).toMatch(/^VERDICT: FAIL/)
   expect(err.stdout).toContain('bleeds 100px outside div.parent')
 }, 60_000)
+
+// (a) shifty fixture: exit 1, STABILITY line, the pushed-down img's selector at its
+// +300-ish timing bucket, and the intrinsic-size suspect.
+test('stability on the shifty fixture exits 1 and reports the shift, timing, and suspect', async () => {
+  const err = await cli('stability', `${srv.url}/shifty/index.html`, '--viewport', '400x800').catch((e) => e)
+  expect(err.code).toBe(1)
+  expect(err.stdout.split('\n')[0]).toMatch(/^STABILITY: 0\.\d+/)
+  expect(err.stdout).toMatch(/\[\+[2-4]\d\d\] img\.photo moved \(0,0\)→\(0,200\) score 0\.\d+/)
+  expect(err.stdout).toContain('suspect: img.photo has no intrinsic size attributes')
+}, 20_000)
+
+// (b) fluid fixture: no async DOM changes, so no shifts — exit 0.
+test('stability on the fluid fixture exits 0 with a zero score', async () => {
+  const { stdout } = await cli('stability', `${srv.url}/fluid/index.html`, '--duration', '500')
+  expect(stdout.trimEnd()).toBe('STABILITY: 0 (threshold 0.1)')
+}, 20_000)
+
+test('stability --threshold overrides the default 0.1 boundary, dropping below the shifty score', async () => {
+  const { stdout } = await cli('stability', `${srv.url}/shifty/index.html`, '--viewport', '400x800', '--threshold', '0.5')
+  expect(stdout).toContain('(threshold 0.5)')
+}, 20_000)
+
+test('stability --duration with a non-numeric value exits 2', async () => {
+  const err = await cli('stability', `${srv.url}/shifty/index.html`, '--duration', 'nope').catch((e) => e)
+  expect(err.code).toBe(2)
+  expect(err.stderr).toContain('--duration must be a number')
+}, 60_000)
+
+test('stability rejects --hover (interact/state flags are out of scope in v8)', async () => {
+  const err = await cli('stability', `${srv.url}/shifty/index.html`, '--hover', '.cta').catch((e) => e)
+  expect(err.code).toBe(2)
+  expect(err.stderr).toContain('--hover')
+}, 60_000)

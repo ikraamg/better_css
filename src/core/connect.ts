@@ -109,7 +109,15 @@ export function pageWasBusy(client: object): boolean {
 export async function withPage<T>(
   url: string,
   fn: (client: any) => Promise<T>,
-  opts: { port?: number; viewport?: { width: number; height: number }; captureAnimations?: boolean } = {},
+  opts: {
+    port?: number
+    viewport?: { width: number; height: number }
+    captureAnimations?: boolean
+    // Runs after Page/Network are enabled and the viewport is set, but before Page.navigate —
+    // the one gap where a caller can arm something that must see the FIRST document (e.g.
+    // stability.ts's Page.addScriptToEvaluateOnNewDocument for its layout-shift observer).
+    beforeNavigate?: (client: any) => Promise<void>
+  } = {},
 ): Promise<T> {
   const port = await resolvePort(opts.port)
   const target = await CDP.New({ port, url: 'about:blank' })
@@ -129,6 +137,7 @@ export async function withPage<T>(
     await client.Network.enable()
     const vp = opts.viewport ?? { width: 1280, height: 800 }
     await client.Emulation.setDeviceMetricsOverride({ ...vp, deviceScaleFactor: 1, mobile: false })
+    if (opts.beforeNavigate) await opts.beforeNavigate(client)
     await navigate(client, url)
     return await fn(client)
   } finally {

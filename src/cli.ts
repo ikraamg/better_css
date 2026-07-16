@@ -11,6 +11,7 @@ import { verifyMatrix } from './core/verify.js'
 import { forcePseudoStates, type PseudoStates } from './core/state.js'
 import { hasInteractSteps, interactWasUnsettled, runInteractSteps, type InteractSteps } from './core/interact.js'
 import { animateNote, needsAnimationCapture, settleAnimations, type AnimateOpts } from './core/animate.js'
+import { measureStability, renderStability } from './core/stability.js'
 
 const USAGE = `bettercss <command> <url> [options]
   layout    <url> [--selector S] [--depth N]   print the LayoutTree (budgeted to 400 lines unless --depth is given)
@@ -32,6 +33,17 @@ const USAGE = `bettercss <command> <url> [options]
                                                 the cost of a second page load per viewport when
                                                 --hover/--focus/--active/--click/--scroll-to AND --name
                                                 are both given
+  stability <url> [--duration MS] [--threshold SCORE] [--viewport WxH]
+                                                load-time layout-shift report (Cumulative Layout
+                                                Shift): waits --duration ms (default 3000) past
+                                                load, then reports every shift and any img/video
+                                                shift source missing width+height attributes.
+                                                Exit 1 when score > threshold (default 0.1, the
+                                                Core Web Vitals "good" boundary). TIMING-DEPENDENT:
+                                                an observation, not a deterministic snapshot — local
+                                                dev servers under-report; throttle to reproduce
+                                                production shifts. No --settled/--at-time/--click/
+                                                --scroll-to/--hover/--focus/--active/--viewports
   options: --port N (attach to Chrome at port N instead of 9222/headless)
            --viewport WxH (emulated viewport size, e.g. 1280x800)
            --viewports W1xH1,W2xH2,... (check/snapshot/diff/verify once per viewport)
@@ -101,7 +113,7 @@ async function main(): Promise<number> {
   const [cmd, url] = process.argv.slice(2)
   const f = flags(process.argv.slice(4))
   if (!cmd || !url) { console.error(USAGE); return 2 }
-  if (!['layout', 'inspect', 'explain', 'check', 'snapshot', 'diff', 'verify'].includes(cmd)) {
+  if (!['layout', 'inspect', 'explain', 'check', 'snapshot', 'diff', 'verify', 'stability'].includes(cmd)) {
     console.error(USAGE)
     return 2
   }
@@ -121,7 +133,7 @@ async function main(): Promise<number> {
     console.error(`--click/--scroll-to are only valid for layout/inspect/explain/check/verify, not ${cmd} — interacted-state snapshots invite stale-state confusion.`)
     return 2
   }
-  for (const name of ['depth', 'port', 'at-time']) {
+  for (const name of ['depth', 'port', 'at-time', 'duration', 'threshold']) {
     if (f[name] !== undefined && Number.isNaN(Number(f[name]))) {
       console.error(`--${name} must be a number, got '${f[name]}'`)
       return 2
@@ -155,6 +167,18 @@ async function main(): Promise<number> {
     return 2
   }
   const opts = { port: f.port ? Number(f.port) : undefined, viewport, captureAnimations: needsAnimationCapture(animate) }
+
+  if (cmd === 'stability') {
+    const result = await measureStability(url, {
+      port: opts.port,
+      viewport,
+      duration: f.duration ? Number(f.duration) : undefined,
+      threshold: f.threshold ? Number(f.threshold) : undefined,
+    })
+    if (result.score > result.threshold) process.exitCode = 1
+    console.log(renderStability(result))
+    return Number(process.exitCode ?? 0)
+  }
 
   if (cmd === 'verify') {
     const states: PseudoStates = { hover: f.hover, focus: f.focus, active: f.active }

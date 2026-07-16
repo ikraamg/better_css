@@ -29,10 +29,10 @@ const client = new Client({ name: 'test', version: '0' })
 await client.connect(new StdioClientTransport({ command: process.execPath, args: ['--import', 'tsx', 'src/mcp.ts'] }))
 afterAll(async () => { await client.close(); srv.close() })
 
-test('lists all seven tools', async () => {
+test('lists all eight tools', async () => {
   const { tools } = await client.listTools()
   expect(tools.map((t) => t.name).sort())
-    .toEqual(['check', 'diff', 'explain', 'inspect', 'layout', 'snapshot', 'verify'])
+    .toEqual(['check', 'diff', 'explain', 'inspect', 'layout', 'snapshot', 'stability', 'verify'])
 })
 
 test('layout tool returns the tree', async () => {
@@ -177,6 +177,25 @@ test('verify tool with name diffs the resting layout and notes a missing per-vie
   expect(text.split('\n')[0]).toBe('VERDICT: PASS')
   expect(text).toContain("note: no snapshot 'nope@1280x800' — diff skipped for this viewport")
 }, 60_000)
+
+test('stability tool reports the shifty fixture\'s shift, timing, and suspect, exceeding the default threshold', async () => {
+  const res = await client.callTool({
+    name: 'stability',
+    arguments: { url: `${srv.url}/shifty/index.html`, viewport: '400x800' },
+  })
+  const text = (res.content as any)[0].text
+  expect(text.split('\n')[0]).toMatch(/^STABILITY: 0\.\d+/)
+  expect(text).toMatch(/\[\+[2-4]\d\d\] img\.photo moved \(0,0\)→\(0,200\) score 0\.\d+/)
+  expect(text).toContain('suspect: img.photo has no intrinsic size attributes')
+}, 20_000)
+
+test('stability tool reports zero score on the fluid fixture (no shifts)', async () => {
+  const res = await client.callTool({
+    name: 'stability',
+    arguments: { url: `${srv.url}/fluid/index.html`, duration: 500 },
+  })
+  expect((res.content as any)[0].text).toBe('STABILITY: 0 (threshold 0.1)')
+}, 20_000)
 
 test('shuts down its headless Chrome subprocess when the MCP session closes', async () => {
   await client.close()
