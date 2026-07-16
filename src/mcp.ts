@@ -12,7 +12,7 @@ import { diffTrees, loadSnapshot, renderDiff, saveSnapshot } from './core/snapsh
 import { checkMatrix, diffMatrix, snapshotMatrix } from './core/matrix.js'
 import { verifyMatrix } from './core/verify.js'
 import { forcePseudoStates, type PseudoStates } from './core/state.js'
-import { hasInteractSteps, interactWasUnsettled, runInteractSteps, type InteractSteps } from './core/interact.js'
+import { assertNoInteractNavigation, hasInteractSteps, interactWasUnsettled, runInteractSteps, type InteractSteps } from './core/interact.js'
 import { animateNote, needsAnimationCapture, settleAnimations, type AnimateOpts } from './core/animate.js'
 import { measureStability, renderStability } from './core/stability.js'
 
@@ -49,6 +49,9 @@ function page(
     await settleAnimations(client, opts.animate ?? {})
     if (opts.states) await forcePseudoStates(client, opts.states)
     let out = await fn(client)
+    // A click's delayed redirect can land during fn's capture, after runInteractSteps
+    // already returned clean — check again now (see interact.ts).
+    assertNoInteractNavigation(client)
     if (pageWasBusy(client)) out += '\nnote: page was still loading at the 10s cap; results may be early'
     if (interactWasUnsettled(client)) out += '\nnote: page had not settled after interactions'
     return text(out + animateNote(client))

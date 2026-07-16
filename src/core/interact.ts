@@ -14,6 +14,29 @@ export function interactWasUnsettled(client: object): boolean {
   return unsettled.has(client)
 }
 
+// Populated by runInteractSteps' frameNavigated listener, which stays armed past its
+// return (the client/listener live for the rest of withPage's callback) — a click
+// handler's delayed redirect (setTimeout + location.href) can land during the caller's
+// own capture, after runInteractSteps has already returned cleanly. All four capture
+// callers (cli.ts, mcp.ts's page(), matrix.ts's checkMatrix, verify.ts) check this AFTER
+// capture and abort with assertNoInteractNavigation, so a late redirect is always caught
+// instead of silently describing the page it navigated away from.
+const navigations = new WeakMap<object, string>()
+export function interactSawNavigation(client: object): string | null {
+  return navigations.get(client) ?? null
+}
+
+function navError(to: string): Error {
+  return new Error(`--click caused a navigation to ${to} — interact steps are for same-page UI`)
+}
+
+// One-liner for the four capture callers — avoids reconstructing navError's message at
+// each call site.
+export function assertNoInteractNavigation(client: object): void {
+  const to = interactSawNavigation(client)
+  if (to) throw navError(to)
+}
+
 const NUMERIC_Y = /^\d+$/
 
 async function scrollToTarget(client: any, target: string): Promise<void> {
@@ -103,20 +126,17 @@ export async function waitForSettle(client: any, capMs = SETTLE_CAP_MS): Promise
 export async function runInteractSteps(client: any, steps: InteractSteps): Promise<void> {
   if (!hasInteractSteps(steps)) return
 
-  const stripHash = (u: string) => u.split('#')[0]
-  const { result: start } = await client.Runtime.evaluate({ expression: 'location.href', returnByValue: true })
-  const startUrl = stripHash(start.value)
-  const navError = (to: string) =>
-    new Error(`--click caused a navigation to ${to} — interact steps are for same-page UI`)
-
-  // Armed for the ENTIRE interact phase, settle included — a click handler may
-  // schedule a delayed redirect (setTimeout + location.href) that lands well after
-  // the click itself. Hash-only jumps never fire frameNavigated (verified
-  // empirically); the stripHash compare is belt and braces for any same-document
-  // frame event.
-  let navigatedTo: string | null = null
+  // Armed for the ENTIRE interact phase and left armed after this function returns (see
+  // the `navigations` WeakMap above) — a click handler may schedule a delayed redirect
+  // (setTimeout + location.href) that lands well after the click, even during the
+  // caller's capture. No URL-inequality filter: withPage's own navigation to the
+  // starting page already completed before this phase begins (connect.ts's navigate),
+  // so ANY main-frame frameNavigated from here on is interaction-caused — including a
+  // same-URL self-redirect (e.g. a full reload), which an inequality filter would miss
+  // entirely. Hash-only jumps never fire frameNavigated (verified empirically), so they
+  // stay tolerated with no special-casing needed.
   client.Page.frameNavigated(({ frame }: any) => {
-    if (!frame.parentId && stripHash(frame.url) !== startUrl) navigatedTo = frame.url
+    if (!frame.parentId) navigations.set(client, frame.url)
   })
   // Flush + check: chrome-remote-interface delivers messages in order over one
   // connection (the same guarantee explain.ts's collectSheets relies on), so one
@@ -125,7 +145,7 @@ export async function runInteractSteps(client: any, steps: InteractSteps): Promi
   // execution context, which is exactly the case being reported.
   const navCheck = async () => {
     await client.Runtime.evaluate({ expression: '1' }).catch(() => {})
-    if (navigatedTo) throw navError(navigatedTo)
+    assertNoInteractNavigation(client)
   }
 
   if (steps.scrollTo !== undefined) await scrollToTarget(client, steps.scrollTo)
@@ -146,13 +166,6 @@ export async function runInteractSteps(client: any, steps: InteractSteps): Promi
     throw err
   }
   await navCheck()
-  // Final guard: compare the frame's current URL to the pre-interact one
-  // (hash-stripped) — catches a delayed redirect that landed and fully committed
-  // between the per-click checks and here.
-  // ponytail: a redirect firing after this returns (during the caller's capture)
-  // still escapes; closing that needs a post-capture check in every caller.
-  const { result: end } = await client.Runtime.evaluate({ expression: 'location.href', returnByValue: true }).catch(() => ({ result: {} }))
-  if (end.value && stripHash(end.value) !== startUrl) throw navError(end.value)
 
   if (!settled) unsettled.add(client)
 }

@@ -4,7 +4,7 @@ import { buildTree, renderTree } from './tree.js'
 import { checkInvariants, renderViolations } from './invariants.js'
 import { diffTrees, loadSnapshot, renderDiff } from './snapshot.js'
 import { forcePseudoStates, type PseudoStates } from './state.js'
-import { hasInteractSteps, interactWasUnsettled, runInteractSteps, type InteractSteps } from './interact.js'
+import { assertNoInteractNavigation, hasInteractSteps, interactWasUnsettled, runInteractSteps, type InteractSteps } from './interact.js'
 import { animateNote, needsAnimationCapture, settleAnimations, type AnimateOpts } from './animate.js'
 
 function prefixLines(label: string, text: string): string {
@@ -61,6 +61,10 @@ export async function verifyMatrix(
     if (opts.states) await forcePseudoStates(client, opts.states)
     const tree = buildTree(await extract(client))
     const violations = checkInvariants(tree)
+    // A click's delayed redirect can land during the extract/checkInvariants capture
+    // above, after runInteractSteps already returned clean — check again now (see
+    // interact.ts).
+    assertNoInteractNavigation(client)
     let block = (await renderViolations(client, violations)) + busyNote(client)
     let changes = 0
     if (opts.name && !modified) {

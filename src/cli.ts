@@ -9,7 +9,7 @@ import { diffTrees, loadSnapshot, renderDiff, saveSnapshot } from './core/snapsh
 import { checkMatrix, diffMatrix, snapshotMatrix } from './core/matrix.js'
 import { verifyMatrix } from './core/verify.js'
 import { forcePseudoStates, type PseudoStates } from './core/state.js'
-import { hasInteractSteps, interactWasUnsettled, runInteractSteps, type InteractSteps } from './core/interact.js'
+import { assertNoInteractNavigation, hasInteractSteps, interactWasUnsettled, runInteractSteps, type InteractSteps } from './core/interact.js'
 import { animateNote, needsAnimationCapture, settleAnimations, type AnimateOpts } from './core/animate.js'
 import { measureStability, renderStability } from './core/stability.js'
 
@@ -259,6 +259,9 @@ async function main(): Promise<number> {
       }
       default: result = USAGE
     }
+    // A click's delayed redirect can land during the switch's capture above, after
+    // runInteractSteps already returned clean — check again now (see interact.ts).
+    assertNoInteractNavigation(client)
     if (interactWasUnsettled(client)) result += '\nnote: page had not settled after interactions'
     return result + animateNote(client)
   }, opts)

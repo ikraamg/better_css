@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from 'vitest'
 import { serveFixtures } from './helpers/server.js'
 import { withPage, shutdownChrome } from '../src/core/connect.js'
-import { runInteractSteps } from '../src/core/interact.js'
+import { assertNoInteractNavigation, interactSawNavigation, runInteractSteps } from '../src/core/interact.js'
 import { extract } from '../src/core/extract.js'
 import { buildTree, findNode } from '../src/core/tree.js'
 import { checkInvariants } from '../src/core/invariants.js'
@@ -86,3 +86,23 @@ test('a click that only changes the URL hash does NOT trigger the navigation gua
 test('no click/scrollTo given is a no-op', async () => {
   await expect(withPage(`${srv.url}/interactive/index.html`, (c) => runInteractSteps(c, {}))).resolves.toBeUndefined()
 })
+
+test('a delayed redirect with NO layout churn returns clean from runInteractSteps (settle exits instantly, well before the redirect fires) but is still recorded once it lands, for the caller\'s post-capture check to catch', async () => {
+  await withPage(`${srv.url}/interactive/index.html`, async (c) => {
+    // #silent-late-nav's setTimeout fires 500ms after the click — no CSS churn at all,
+    // so waitForSettle's two-identical-frame check passes on its very first poll and
+    // runInteractSteps returns tens of ms after the click, long before the redirect.
+    await expect(runInteractSteps(c, { click: ['#silent-late-nav'] })).resolves.toBeUndefined()
+    expect(interactSawNavigation(c)).toBeNull()
+
+    // This is a real setTimeout in the page, not a simulated one — wait past it (this
+    // mirrors what would happen during a caller's own capture work, or simply the time
+    // between return and whenever the caller gets around to checking).
+    await new Promise((resolve) => setTimeout(resolve, 700))
+    await c.Runtime.evaluate({ expression: '1' }).catch(() => {}) // flush the queued frameNavigated
+
+    expect(interactSawNavigation(c)).toMatch(/\/interactive\/other\.html$/)
+    expect(() => assertNoInteractNavigation(c))
+      .toThrow(/--click caused a navigation to .*\/interactive\/other\.html — interact steps are for same-page UI/)
+  })
+}, 10_000)

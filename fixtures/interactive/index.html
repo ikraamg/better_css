@@ -2,7 +2,7 @@
 * { margin: 0; box-sizing: border-box; }
 body { height: 2000px; }
 .wrap { width: 300px; }
-#menu-btn, #arm-btn, #fire-btn, #late-nav { width: 80px; height: 32px; }
+#menu-btn, #arm-btn, #fire-btn, #late-nav, #silent-late-nav { width: 80px; height: 32px; }
 #menu, #menu2 { display: none; width: 400px; height: 100px; background: #eee; }
 #menu.open, #menu2.open { display: block; }
 #late-nav.leaving { animation: leaving 0.3s linear infinite; }
@@ -30,6 +30,7 @@ body { height: 2000px; }
 <div id="anim-box"></div>
 <a id="hash-link" href="#section">Section</a>
 <a id="away-link" href="/interactive/other.html">Away</a>
+<button id="silent-late-nav">Leave quietly</button>
 <div id="section">Section content</div>
 <div class="wrap"><button id="fold-btn">Fold</button></div>
 <a id="top-link" href="#top" aria-label="Back to top"></a>
@@ -46,6 +47,11 @@ document.getElementById('fire-btn').addEventListener('click', function () {
 document.getElementById('late-nav').addEventListener('click', function () {
   this.classList.add('leaving') // realistic redirect UX: spinner-style animation while leaving
   setTimeout(function () { location.href = 'other.html' }, 150)
+})
+document.getElementById('silent-late-nav').addEventListener('click', function () {
+  // No layout churn at all (unlike #late-nav) — settle resolves near-instantly, so the
+  // redirect lands well after runInteractSteps returns, during the caller's capture.
+  setTimeout(function () { location.href = 'other.html' }, 500)
 })
 document.getElementById('anim-box').addEventListener('click', function () {
   this.classList.add('moved')
