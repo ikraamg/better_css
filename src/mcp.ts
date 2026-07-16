@@ -39,6 +39,32 @@ const scrollTo = z.string().optional().describe('Scroll to this selector (scroll
 const settled = z.boolean().optional().describe('Fast-forward every CSS transition/animation to its end state before reading the page. A perpetual animation (e.g. a spinner) can\'t end, so it\'s pinned to its start (t=0) for determinism, with a note. Recommended when the page has animations, for a deterministic read. Mutually exclusive with atTime.')
 const atTime = z.number().optional().describe('Seek every animation to this many ms (instead of its end), clamped to each animation\'s own full duration (delay + duration x iterations). Mutually exclusive with settled.')
 
+// snapshot/diff/stability don't support some of the params above — declared here as
+// optional (not omitted) so a schema-driven agent can see the param exists and read why
+// it's refused, instead of it silently vanishing (the old behavior: these tools never
+// declared them, so the zod shape just dropped anything unknown). The handlers below
+// throw the CLI's exact rejection wording for the same case.
+const rejectedStr = (why: string) => z.string().optional().describe(`NOT supported here — ${why} Declared so you can see it exists; passing it throws.`)
+const rejectedArr = (why: string) => z.array(z.string()).optional().describe(`NOT supported here — ${why} Declared so you can see it exists; passing it throws.`)
+const rejectedBool = (why: string) => z.boolean().optional().describe(`NOT supported here — ${why} Declared so you can see it exists; passing it throws.`)
+const rejectedNum = (why: string) => z.number().optional().describe(`NOT supported here — ${why} Declared so you can see it exists; passing it throws.`)
+
+const STALE_STATE = 'forced/interacted-state captures invite stale-state confusion; use layout/inspect/explain/check/verify.'
+const NOT_A_SNAPSHOT = 'a snapshot must be a deterministic capture, not one pinned to a specific animation frame; use settled instead.'
+const STABILITY_SCOPE = 'it observes one natural page load (no animation seeking, no viewport matrix).'
+
+// Throws the CLI's exact wording (cli.ts's stateFlags/hasInteractSteps checks) for one
+// consistent error surface across both front ends.
+function rejectStateAndInteract(
+  tool: string, args: { hover?: string; focus?: string; active?: string; click?: string[]; scrollTo?: string },
+): void {
+  const stateFlag = (['hover', 'focus', 'active'] as const).find((k) => args[k] !== undefined)
+  if (stateFlag) throw new Error(`--${stateFlag} is only valid for layout/inspect/explain/check/verify, not ${tool} — forced-state snapshots invite stale-state confusion.`)
+  if ((args.click?.length ?? 0) > 0 || args.scrollTo !== undefined) {
+    throw new Error(`--click/--scroll-to are only valid for layout/inspect/explain/check/verify, not ${tool} — interacted-state snapshots invite stale-state confusion.`)
+  }
+}
+
 function page(
   u: string,
   opts: { port?: number; viewport?: string; states?: PseudoStates; interact?: InteractSteps; animate?: AnimateOpts },
@@ -90,24 +116,40 @@ server.tool('check', 'Run layout invariants (overflow, bleed, clipped text, unin
     }))
 
 server.tool('snapshot', 'Lock the current layout as a named .tree snapshot for later diffing. Do this when the page looks CORRECT. Pass settled (recommended for animated pages, for a deterministic snapshot). atTime is NOT supported here — a specific animation frame pinned by hand is not a reproducible baseline; use layout/check with atTime to inspect mid-animation states instead.',
-  { url, port, viewport, viewports, name: z.string(), dir: z.string().optional().describe("Snapshot dir (default .bettercss relative to the MCP server's working directory — pass an absolute path when the server isn't launched from your project root)"), settled },
-  ({ url: u, port: p, viewport: v, viewports: vs, name, dir, settled: se }) => vs
-    ? snapshotMatrix(u, parseViewportList(vs), name, dir, { port: p, settled: se }).then((s) => text(s))
-    : page(u, { port: p, viewport: v, animate: { settled: se } }, async (client) => {
-      const tree = buildTree(await extract(client))
-      checkInvariants(tree)
-      return `saved ${saveSnapshot(renderTree(tree), name, dir)}`
-    }))
+  {
+    url, port, viewport, viewports, name: z.string(), dir: z.string().optional().describe("Snapshot dir (default .bettercss relative to the MCP server's working directory — pass an absolute path when the server isn't launched from your project root)"), settled,
+    hover: rejectedStr(STALE_STATE), focus: rejectedStr(STALE_STATE), active: rejectedStr(STALE_STATE),
+    click: rejectedArr(STALE_STATE), scrollTo: rejectedStr(STALE_STATE), atTime: rejectedNum(NOT_A_SNAPSHOT),
+  },
+  ({ url: u, port: p, viewport: v, viewports: vs, name, dir, settled: se, hover: h, focus: fo, active: a, click: cl, scrollTo: st, atTime: at }) => {
+    rejectStateAndInteract('snapshot', { hover: h, focus: fo, active: a, click: cl, scrollTo: st })
+    if (at !== undefined) throw new Error(`--at-time is not valid for snapshot — ${NOT_A_SNAPSHOT}`)
+    return vs
+      ? snapshotMatrix(u, parseViewportList(vs), name, dir, { port: p, settled: se }).then((s) => text(s))
+      : page(u, { port: p, viewport: v, animate: { settled: se } }, async (client) => {
+        const tree = buildTree(await extract(client))
+        checkInvariants(tree)
+        return `saved ${saveSnapshot(renderTree(tree), name, dir)}`
+      })
+  })
 
 server.tool('diff', 'Structural diff of the current layout vs a named snapshot: what moved/resized/appeared/disappeared, in px. Run after every CSS change to see its actual effect. Pass settled (recommended for animated pages, matching how the snapshot was likely taken). atTime is NOT supported here — a specific animation frame pinned by hand is not a reproducible baseline; use layout/check with atTime to inspect mid-animation states instead.',
-  { url, port, viewport, viewports, name: z.string(), dir: z.string().optional().describe("Snapshot dir (default .bettercss relative to the MCP server's working directory — pass an absolute path when the server isn't launched from your project root)"), settled },
-  ({ url: u, port: p, viewport: v, viewports: vs, name, dir, settled: se }) => vs
-    ? diffMatrix(u, parseViewportList(vs), name, dir, { port: p, settled: se }).then((s) => text(s))
-    : page(u, { port: p, viewport: v, animate: { settled: se } }, async (client) => {
-      const tree = buildTree(await extract(client))
-      checkInvariants(tree)
-      return renderDiff(diffTrees(loadSnapshot(name, dir), renderTree(tree)))
-    }))
+  {
+    url, port, viewport, viewports, name: z.string(), dir: z.string().optional().describe("Snapshot dir (default .bettercss relative to the MCP server's working directory — pass an absolute path when the server isn't launched from your project root)"), settled,
+    hover: rejectedStr(STALE_STATE), focus: rejectedStr(STALE_STATE), active: rejectedStr(STALE_STATE),
+    click: rejectedArr(STALE_STATE), scrollTo: rejectedStr(STALE_STATE), atTime: rejectedNum(NOT_A_SNAPSHOT),
+  },
+  ({ url: u, port: p, viewport: v, viewports: vs, name, dir, settled: se, hover: h, focus: fo, active: a, click: cl, scrollTo: st, atTime: at }) => {
+    rejectStateAndInteract('diff', { hover: h, focus: fo, active: a, click: cl, scrollTo: st })
+    if (at !== undefined) throw new Error(`--at-time is not valid for diff — ${NOT_A_SNAPSHOT}`)
+    return vs
+      ? diffMatrix(u, parseViewportList(vs), name, dir, { port: p, settled: se }).then((s) => text(s))
+      : page(u, { port: p, viewport: v, animate: { settled: se } }, async (client) => {
+        const tree = buildTree(await extract(client))
+        checkInvariants(tree)
+        return renderDiff(diffTrees(loadSnapshot(name, dir), renderTree(tree)))
+      })
+  })
 
 server.tool('verify', `Composite one-shot "is this page correct": runs layout invariants and, if a name is given, also diffs a locked snapshot — across a viewport sweep, in a single call. FIRST line of the output is always VERDICT: PASS or VERDICT: FAIL (violations + layout changes), so you can branch on line 1 without parsing details. Defaults to the ${DEFAULT_SWEEP} sweep when viewports is omitted — verify always runs as a matrix, even with one viewport, so snapshot files are always named <name>@WxH (never plain <name>.tree). Pass scrollTo/click to interact with the page first (order: scrollTo, then click(s), then settle), then settled/atTime to fast-forward or seek animations, then hover/focus/active to see the layout consequences of interaction states without a mouse. settled is RECOMMENDED whenever the page has animations — the default behavior is unchanged (no seeking) otherwise. IMPORTANT: states, interact steps, and atTime affect the invariant check only — the snapshot diff always compares the resting (unforced, un-interacted, not-pinned-to-a-frame) layout, applying settled if given (since diffing a forced/interacted layout against a resting snapshot would always report a change); this costs a second page load per viewport when states/interact are combined with name. A missing per-viewport snapshot is reported as a note, not a failure (snapshot only the viewports you care about).`,
   { url, port, viewports, hover, focus, active, click, scrollTo, settled, atTime, name: z.string().optional(), dir: z.string().optional().describe("Snapshot dir (default .bettercss relative to the MCP server's working directory — pass an absolute path when the server isn't launched from your project root)") },
@@ -123,9 +165,19 @@ server.tool('verify', `Composite one-shot "is this page correct": runs layout in
   })
 
 server.tool('stability', 'Load-time layout-shift report (Cumulative Layout Shift): waits `duration` ms (default 3000) past load, then reports every shift — timing, the moved element\'s selector, its before/after box, and its score — plus any img/video shift source missing width/height attributes (the #1 CLS cause). First line is always STABILITY: <score> (threshold <t>). Score is the raw sum over the observation window; the CWV metric uses session windows — multi-burst pages may score higher here. TIMING-DEPENDENT: this is an OBSERVATION, not a deterministic snapshot — local dev servers under-report; throttle CPU/network to reproduce production shifts. No interact/state/settled params (out of scope) or viewports (single viewport only).',
-  { url, port, viewport, duration: z.number().optional().describe('Milliseconds to observe past load before collecting shifts (default 3000)'), threshold: z.number().optional().describe('Score above which this is reported as unstable (default 0.1, the Core Web Vitals "good" boundary)') },
-  ({ url: u, port: p, viewport: v, duration, threshold }) =>
-    measureStability(u, { port: p, viewport: v ? parseViewport(v) : undefined, duration, threshold }).then((r) => text(renderStability(r))))
+  {
+    url, port, viewport, duration: z.number().optional().describe('Milliseconds to observe past load before collecting shifts (default 3000)'), threshold: z.number().optional().describe('Score above which this is reported as unstable (default 0.1, the Core Web Vitals "good" boundary)'),
+    hover: rejectedStr(STALE_STATE), focus: rejectedStr(STALE_STATE), active: rejectedStr(STALE_STATE),
+    click: rejectedArr(STALE_STATE), scrollTo: rejectedStr(STALE_STATE),
+    settled: rejectedBool(STABILITY_SCOPE), atTime: rejectedNum(STABILITY_SCOPE), viewports: rejectedStr(STABILITY_SCOPE),
+  },
+  ({ url: u, port: p, viewport: v, duration, threshold, hover: h, focus: fo, active: a, click: cl, scrollTo: st, settled: se, atTime: at, viewports: vs }) => {
+    rejectStateAndInteract('stability', { hover: h, focus: fo, active: a, click: cl, scrollTo: st })
+    for (const [flag, val] of [['settled', se], ['at-time', at], ['viewports', vs]] as const) {
+      if (val !== undefined) throw new Error(`--${flag} is not valid for stability — ${STABILITY_SCOPE}`)
+    }
+    return measureStability(u, { port: p, viewport: v ? parseViewport(v) : undefined, duration, threshold }).then((r) => text(renderStability(r)))
+  })
 
 // Every session launches its own headless Chrome + temp profile (src/core/connect.ts);
 // without this, exiting the MCP session leaks both. Cover both ways a session ends:

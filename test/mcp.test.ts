@@ -178,6 +178,24 @@ test('verify tool with name diffs the resting layout and notes a missing per-vie
   expect(text).toContain("note: no snapshot 'nope@1280x800' — diff skipped for this viewport")
 }, 60_000)
 
+test('snapshot tool rejects click with a clear error instead of silently ignoring it', async () => {
+  const res = await client.callTool({ name: 'snapshot', arguments: { url: `${srv.url}/interactive/index.html`, name: 'x', click: ['#menu-btn'] } })
+  expect(res.isError).toBe(true)
+  expect((res.content as any)[0].text).toContain('--click/--scroll-to are only valid for layout/inspect/explain/check/verify, not snapshot')
+})
+
+test('diff tool rejects atTime with a clear error instead of silently ignoring it', async () => {
+  const res = await client.callTool({ name: 'diff', arguments: { url: `${srv.url}/animated/index.html`, name: 'x', atTime: 0 } })
+  expect(res.isError).toBe(true)
+  expect((res.content as any)[0].text).toContain('--at-time is not valid for diff')
+})
+
+test('stability tool rejects viewports with a clear error instead of silently ignoring it', async () => {
+  const res = await client.callTool({ name: 'stability', arguments: { url: `${srv.url}/basic/index.html`, viewports: '600x800,1280x800' } })
+  expect(res.isError).toBe(true)
+  expect((res.content as any)[0].text).toContain('--viewports is not valid for stability')
+})
+
 test('stability tool reports the shifty fixture\'s shift, timing, and suspect, exceeding the default threshold', async () => {
   const res = await client.callTool({
     name: 'stability',
