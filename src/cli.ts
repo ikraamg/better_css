@@ -9,6 +9,7 @@ import { diffTrees, loadSnapshot, renderDiff, saveSnapshot } from './core/snapsh
 import { checkMatrix, diffMatrix, snapshotMatrix } from './core/matrix.js'
 import { verifyMatrix } from './core/verify.js'
 import { forcePseudoStates, type PseudoStates } from './core/state.js'
+import { hasInteractSteps, interactWasUnsettled, runInteractSteps, type InteractSteps } from './core/interact.js'
 
 const USAGE = `bettercss <command> <url> [options]
   layout    <url> [--selector S] [--depth N]   print the LayoutTree (budgeted to 400 lines unless --depth is given)
@@ -24,20 +25,54 @@ const USAGE = `bettercss <command> <url> [options]
                                                 to --viewports ${DEFAULT_SWEEP} when neither
                                                 --viewports nor --viewport is given (--viewport acts
                                                 as a one-entry sweep; snapshots are always named
-                                                <name>@WxH, even with one viewport). States affect the invariant check
-                                                only — the diff always compares the resting (unforced)
-                                                layout, at the cost of a second page load per viewport
-                                                when --hover/--focus/--active AND --name are both given
+                                                <name>@WxH, even with one viewport). States and interact
+                                                steps affect the invariant check only — the diff always
+                                                compares the resting (unforced, un-interacted) layout, at
+                                                the cost of a second page load per viewport when
+                                                --hover/--focus/--active/--click/--scroll-to AND --name
+                                                are both given
   options: --port N (attach to Chrome at port N instead of 9222/headless)
            --viewport WxH (emulated viewport size, e.g. 1280x800)
            --viewports W1xH1,W2xH2,... (check/snapshot/diff/verify once per viewport)
            --hover S, --focus S, --active S (force a pseudo-state on selector S;
-             layout/inspect/explain/check/verify only, not snapshot/diff)`
+             layout/inspect/explain/check/verify only, not snapshot/diff)
+           --click S (repeatable; real click on selector S), --scroll-to S_or_Y (selector or
+             pixel y) — interaction pre-steps, layout/inspect/explain/check/verify only, not
+             snapshot/diff. Order: navigate, scroll-to, clicks (in argument order), settle,
+             then --hover/--focus/--active, then capture`
 
-function flags(argv: string[]): Record<string, string> {
-  const out: Record<string, string> = {}
+interface Flags {
+  [key: string]: string | string[] | undefined
+  click?: string[]
+  'scroll-to'?: string
+  hover?: string; focus?: string; active?: string
+  // required by REQUIRED[cmd] before use on their respective commands — declared
+  // non-optional here to match flags()'s prior Record<string,string> typing exactly
+  selector: string; property: string; name: string
+  depth?: string; port?: string
+  viewport?: string; viewports?: string
+  dir?: string
+}
+
+// Repeated occurrences of these flags accumulate into an array instead of last-wins.
+const REPEATABLE = new Set(['click'])
+
+function flags(argv: string[]): Flags {
+  // required fields (selector/property/name) are only actually read on commands whose
+  // REQUIRED[cmd] check already guarantees they were passed — same pragmatic lie the
+  // prior Record<string,string> return type made implicitly.
+  const out = {} as Flags
   for (let i = 0; i < argv.length; i++) {
-    if (argv[i].startsWith('--')) out[argv[i].slice(2)] = argv[++i]
+    if (!argv[i].startsWith('--')) continue
+    const key = argv[i].slice(2)
+    const val = argv[++i]
+    if (REPEATABLE.has(key)) {
+      const arr = (out[key] as string[] | undefined) ?? []
+      arr.push(val)
+      out[key] = arr
+    } else {
+      out[key] = val
+    }
   }
   return out
 }
@@ -68,6 +103,11 @@ async function main(): Promise<number> {
     console.error(`--${stateFlags[0]} is only valid for layout/inspect/explain/check/verify, not ${cmd} — forced-state snapshots invite stale-state confusion.`)
     return 2
   }
+  const interact: InteractSteps = { click: f.click, scrollTo: f['scroll-to'] }
+  if (hasInteractSteps(interact) && !['layout', 'inspect', 'explain', 'check', 'verify'].includes(cmd)) {
+    console.error(`--click/--scroll-to are only valid for layout/inspect/explain/check/verify, not ${cmd} — interacted-state snapshots invite stale-state confusion.`)
+    return 2
+  }
   for (const name of ['depth', 'port']) {
     if (f[name] !== undefined && Number.isNaN(Number(f[name]))) {
       console.error(`--${name} must be a number, got '${f[name]}'`)
@@ -88,6 +128,10 @@ async function main(): Promise<number> {
     console.error(`--${stateFlags[0]} is not supported together with --viewports yet.`)
     return 2
   }
+  if (hasInteractSteps(interact) && viewports && cmd !== 'check' && cmd !== 'verify') {
+    console.error(`--click/--scroll-to is not supported together with --viewports yet.`)
+    return 2
+  }
   const opts = { port: f.port ? Number(f.port) : undefined, viewport }
 
   if (cmd === 'verify') {
@@ -96,6 +140,7 @@ async function main(): Promise<number> {
     const { output, dirty } = await verifyMatrix(url, viewports ?? parseViewportList(f.viewport ?? DEFAULT_SWEEP), {
       port: opts.port,
       states: stateFlags.length ? states : undefined,
+      interact: hasInteractSteps(interact) ? interact : undefined,
       name: f.name,
       dir: f.dir,
     })
@@ -108,7 +153,7 @@ async function main(): Promise<number> {
     const mopts = { port: opts.port }
     if (cmd === 'check') {
       const states: PseudoStates = { hover: f.hover, focus: f.focus, active: f.active }
-      const { output, dirty } = await checkMatrix(url, viewports, { ...mopts, states })
+      const { output, dirty } = await checkMatrix(url, viewports, { ...mopts, states, interact })
       if (dirty) process.exitCode = 1
       console.log(output)
       return Number(process.exitCode ?? 0)
@@ -120,7 +165,9 @@ async function main(): Promise<number> {
 
   const states: PseudoStates = { hover: f.hover, focus: f.focus, active: f.active }
   const output = await withPage(url, async (client) => {
+    await runInteractSteps(client, interact)
     await forcePseudoStates(client, states)
+    let result: string
     switch (cmd) {
       case 'layout': {
         const tree = buildTree(await extract(client))
@@ -128,27 +175,32 @@ async function main(): Promise<number> {
         const from = f.selector ? findNode(tree, f.selector) : undefined
         if (f.selector && !from) throw new Error(`No element matching '${f.selector}' in the layout tree.`)
         const depth = f.depth ? Number(f.depth) : undefined
-        return renderTree(tree, { depth, from, budget: depth === undefined ? 400 : undefined })
+        result = renderTree(tree, { depth, from, budget: depth === undefined ? 400 : undefined })
+        break
       }
-      case 'inspect': return inspect(client, f.selector)
-      case 'explain': return renderExplanation(await explain(client, f.selector, f.property))
+      case 'inspect': result = await inspect(client, f.selector); break
+      case 'explain': result = renderExplanation(await explain(client, f.selector, f.property)); break
       case 'check': {
         const violations = checkInvariants(buildTree(await extract(client)))
         if (violations.length) process.exitCode = 1
-        return renderViolations(client, violations)
+        result = await renderViolations(client, violations)
+        break
       }
       case 'snapshot': {
         const tree = buildTree(await extract(client))
         checkInvariants(tree)
-        return `saved ${saveSnapshot(renderTree(tree), f.name, f.dir)}`
+        result = `saved ${saveSnapshot(renderTree(tree), f.name, f.dir)}`
+        break
       }
       case 'diff': {
         const tree = buildTree(await extract(client))
         checkInvariants(tree)
-        return renderDiff(diffTrees(loadSnapshot(f.name, f.dir), renderTree(tree)))
+        result = renderDiff(diffTrees(loadSnapshot(f.name, f.dir), renderTree(tree)))
+        break
       }
-      default: return USAGE
+      default: result = USAGE
     }
+    return interactWasUnsettled(client) ? `${result}\nnote: page had not settled after interactions` : result
   }, opts)
 
   console.log(output)

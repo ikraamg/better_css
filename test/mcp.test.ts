@@ -128,6 +128,23 @@ test('verify tool returns verdict-first output for the basic fixture', async () 
   expect(text.split('\n')[0]).toBe('VERDICT: PASS')
 })
 
+test('check tool with click param opens the interactive fixture\'s menu and surfaces the parent-bleed', async () => {
+  const clean = await client.callTool({ name: 'check', arguments: { url: `${srv.url}/interactive/index.html` } })
+  expect((clean.content as any)[0].text).toContain('no violations')
+
+  const res = await client.callTool({ name: 'check', arguments: { url: `${srv.url}/interactive/index.html`, click: ['#menu-btn'] } })
+  const text = (res.content as any)[0].text
+  expect(text).toContain('parent-bleed')
+  expect(text).toContain('bleeds 100px outside div.wrap')
+}, 60_000)
+
+test('check tool with scrollTo param scrolls past the fixture\'s threshold and surfaces the tap-target violation', async () => {
+  const res = await client.callTool({ name: 'check', arguments: { url: `${srv.url}/interactive/index.html`, scrollTo: '500' } })
+  const text = (res.content as any)[0].text
+  expect(text).toContain('tap-target')
+  expect(text).toContain('16x16px')
+}, 60_000)
+
 test('verify tool with name diffs the resting layout and notes a missing per-viewport snapshot', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'bettercss-verify-mcp-test-'))
   await client.callTool({

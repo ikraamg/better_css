@@ -1,0 +1,30 @@
+<!doctype html><html><head><style>
+* { margin: 0; box-sizing: border-box; }
+body { height: 2000px; }
+.wrap { width: 300px; }
+#menu-btn { width: 80px; height: 32px; }
+#menu { display: none; width: 400px; height: 100px; background: #eee; }
+#menu.open { display: block; }
+#hash-link { display: block; width: 80px; height: 32px; }
+#away-link { display: block; width: 80px; height: 32px; }
+#section { margin-top: 900px; }
+#top-link { display: none; position: fixed; top: 0; right: 0; width: 16px; height: 16px; overflow: hidden; }
+#top-link.show { display: block; }
+</style></head><body>
+<div class="wrap">
+  <button id="menu-btn">Menu</button>
+  <div id="menu"></div>
+</div>
+<a id="hash-link" href="#section">Section</a>
+<a id="away-link" href="/interactive/other.html">Away</a>
+<div id="section">Section content</div>
+<a id="top-link" href="#top" aria-label="Back to top"></a>
+<script>
+document.getElementById('menu-btn').addEventListener('click', function () {
+  document.getElementById('menu').classList.toggle('open')
+})
+window.addEventListener('scroll', function () {
+  document.getElementById('top-link').classList.toggle('show', window.scrollY > 400)
+})
+</script>
+</body></html>

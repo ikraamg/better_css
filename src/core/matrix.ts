@@ -4,15 +4,17 @@ import { buildTree, renderTree } from './tree.js'
 import { checkInvariants, renderViolations } from './invariants.js'
 import { diffTrees, loadSnapshot, renderDiff, saveSnapshot } from './snapshot.js'
 import { forcePseudoStates, type PseudoStates } from './state.js'
+import { interactWasUnsettled, runInteractSteps, type InteractSteps } from './interact.js'
 
 function prefixLines(label: string, text: string): string {
   return text.split('\n').map((line) => `[${label}] ${line}`).join('\n')
 }
 
-// Matrix paths bypass mcp.ts's page() wrapper, so mirror its busy note here —
-// same wording, appended per viewport (each viewport gets its own 10s cap).
+// Matrix paths bypass mcp.ts's page() wrapper, so mirror its busy/unsettled notes here —
+// same wording, appended per viewport (each viewport gets its own 10s/2s cap).
 function busyNote(client: object): string {
-  return pageWasBusy(client) ? '\nnote: page was still loading at the 10s cap; results may be early' : ''
+  return (pageWasBusy(client) ? '\nnote: page was still loading at the 10s cap; results may be early' : '') +
+    (interactWasUnsettled(client) ? '\nnote: page had not settled after interactions' : '')
 }
 
 // check, once per viewport (sequential, input order). Exit-worthiness (`dirty`) is any
@@ -29,9 +31,10 @@ function busyNote(client: object): string {
 // another only happens with JS-conditional DOM; static fixtures never hit that case, so a
 // selector matching zero DOM nodes anywhere is always the actual error.
 export async function checkMatrix(
-  url: string, viewports: Viewport[], opts: { port?: number; states?: PseudoStates },
+  url: string, viewports: Viewport[], opts: { port?: number; states?: PseudoStates; interact?: InteractSteps },
 ): Promise<{ output: string; dirty: boolean }> {
   const results = await forEachViewport(url, viewports, async (client) => {
+    await runInteractSteps(client, opts.interact ?? {})
     if (opts.states) await forcePseudoStates(client, opts.states)
     const violations = checkInvariants(buildTree(await extract(client)))
     return { violations, rendered: (await renderViolations(client, violations)) + busyNote(client) }

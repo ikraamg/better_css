@@ -208,3 +208,62 @@ test('verify --name diffs the resting layout against a per-viewport snapshot; mi
   expect(missing.split('\n')[0]).toBe('VERDICT: PASS')
   expect(missing).toContain("note: no snapshot 'nope@1280x800' — diff skipped for this viewport")
 }, 60_000)
+
+test('check on the interactive fixture is clean by default; --click forces the menu open and surfaces the exact parent-bleed', async () => {
+  const { stdout } = await cli('check', `${srv.url}/interactive/index.html`)
+  expect(stdout).toContain('no violations')
+
+  const err = await cli('check', `${srv.url}/interactive/index.html`, '--click', '#menu-btn').catch((e) => e)
+  expect(err.code).toBe(1)
+  expect(err.stdout).toContain('parent-bleed')
+  expect(err.stdout).toContain('bleeds 100px outside div.wrap')
+}, 60_000)
+
+test('check --scroll-to 500 scrolls past the fixture\'s threshold and surfaces the tap-target violation', async () => {
+  const err = await cli('check', `${srv.url}/interactive/index.html`, '--scroll-to', '500').catch((e) => e)
+  expect(err.code).toBe(1)
+  expect(err.stdout).toContain('tap-target')
+  expect(err.stdout).toContain('16x16px')
+}, 60_000)
+
+test('layout --click shows #menu at its open 400px width; without --click it is absent (display:none)', async () => {
+  const { stdout: clicked } = await cli('layout', `${srv.url}/interactive/index.html`, '--click', '#menu-btn')
+  expect(clicked).toMatch(/div#menu\.open \(0,32 400x100\)/)
+
+  const { stdout: natural } = await cli('layout', `${srv.url}/interactive/index.html`)
+  expect(natural).not.toContain('div#menu')
+}, 60_000)
+
+test('--click on a selector matching nothing exits 2 with resolveNode\'s suggestions error', async () => {
+  const err = await cli('layout', `${srv.url}/interactive/index.html`, '--click', '.nope').catch((e) => e)
+  expect(err.code).toBe(2)
+  expect(err.stderr).toContain("No element matches '.nope'")
+}, 60_000)
+
+test('two --click occurrences accumulate into an array and run in order: open then close leaves no violations', async () => {
+  const { stdout } = await cli('check', `${srv.url}/interactive/index.html`, '--click', '#menu-btn', '--click', '#menu-btn')
+  expect(stdout).toContain('no violations')
+}, 60_000)
+
+test('a repeated --click does not disturb any other flag\'s last-wins behavior', async () => {
+  const { stdout } = await cli('layout', `${srv.url}/interactive/index.html`, '--viewport', '900x800', '--viewport', '500x800', '--click', '#menu-btn', '--click', '#menu-btn')
+  // last --viewport wins, exactly as before this change
+  expect(stdout).toContain('body (0,0 500x')
+}, 60_000)
+
+test('--click and --scroll-to are rejected for snapshot and diff (out of scope in v1)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bettercss-test-'))
+  const clickErr = await cli('snapshot', `${srv.url}/interactive/index.html`, '--name', 'x', '--dir', dir, '--click', '#menu-btn').catch((e) => e)
+  expect(clickErr.code).toBe(2)
+  expect(clickErr.stderr).toContain('--click')
+
+  const scrollErr = await cli('diff', `${srv.url}/interactive/index.html`, '--name', 'x', '--dir', dir, '--scroll-to', '500').catch((e) => e)
+  expect(scrollErr.code).toBe(2)
+  expect(scrollErr.stderr).toContain('--scroll-to')
+}, 60_000)
+
+test('forced-click layout is byte-identical across two invocations', async () => {
+  const { stdout: first } = await cli('layout', `${srv.url}/interactive/index.html`, '--click', '#menu-btn')
+  const { stdout: second } = await cli('layout', `${srv.url}/interactive/index.html`, '--click', '#menu-btn')
+  expect(first).toBe(second)
+}, 60_000)
