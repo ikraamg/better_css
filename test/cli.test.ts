@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from 'vitest'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { cpSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { serveFixtures } from './helpers/server.js'
@@ -164,6 +164,20 @@ test('verify defaults to the standard sweep, verdict first, [WxH] violations, cl
   expect(err.stdout.split('\n')[0]).toMatch(/^VERDICT: FAIL/)
   expect(err.stdout).toContain('[375x800] viewport-overflow')
   expect(err.stdout).toContain('1280x800=clean')
+}, 60_000)
+
+test('bare verify passes the full default sweep on a genuinely responsive page', async () => {
+  // a 404 page is trivially clean, which would make this test pass vacuously
+  expect(existsSync('fixtures/fluid/index.html')).toBe(true)
+  const { stdout } = await cli('verify', `${srv.url}/fluid/index.html`)
+  expect(stdout.split('\n')[0]).toBe('VERDICT: PASS')
+  expect(stdout).toContain('checked 3 viewports: 375x800=clean, 768x800=clean, 1280x800=clean')
+}, 60_000)
+
+test('verify honors --viewport (singular) as a one-entry sweep', async () => {
+  const { stdout } = await cli('verify', `${srv.url}/basic/index.html`, '--viewport', '1280x800')
+  expect(stdout.split('\n')[0]).toBe('VERDICT: PASS')
+  expect(stdout).toContain('checked 1 viewports: 1280x800=clean')
 }, 60_000)
 
 test('verify on a clean page passes with verdict-first output', async () => {

@@ -21,9 +21,10 @@ const USAGE = `bettercss <command> <url> [options]
                                                 diff a snapshot, one run. First output line is
                                                 VERDICT: PASS/FAIL; exit 1 on any violation or
                                                 layout change. Always runs as a matrix, defaulting
-                                                to --viewports ${DEFAULT_SWEEP} when --viewports is
-                                                omitted (snapshots are always named <name>@WxH, even
-                                                with one viewport). States affect the invariant check
+                                                to --viewports ${DEFAULT_SWEEP} when neither
+                                                --viewports nor --viewport is given (--viewport acts
+                                                as a one-entry sweep; snapshots are always named
+                                                <name>@WxH, even with one viewport). States affect the invariant check
                                                 only — the diff always compares the resting (unforced)
                                                 layout, at the cost of a second page load per viewport
                                                 when --hover/--focus/--active AND --name are both given
@@ -91,7 +92,8 @@ async function main(): Promise<number> {
 
   if (cmd === 'verify') {
     const states: PseudoStates = { hover: f.hover, focus: f.focus, active: f.active }
-    const { output, dirty } = await verifyMatrix(url, viewports ?? parseViewportList(DEFAULT_SWEEP), {
+    // --viewport (singular) acts as a one-entry sweep; --viewports wins when both are given
+    const { output, dirty } = await verifyMatrix(url, viewports ?? parseViewportList(f.viewport ?? DEFAULT_SWEEP), {
       port: opts.port,
       states: stateFlags.length ? states : undefined,
       name: f.name,
