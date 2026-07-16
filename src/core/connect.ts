@@ -36,7 +36,7 @@ async function launchChrome(): Promise<number> {
     // shutdownChrome (observed on Linux CI); a headless tool doesn't need it
     '--disable-crash-reporter', '--disable-breakpad',
     `--user-data-dir=${dir}`,
-  ], { stdio: ['ignore', 'ignore', 'pipe'] })
+  ], { stdio: ['ignore', 'ignore', 'pipe'], detached: true }) // own process group, so shutdown can group-kill
   const port = await new Promise<number>((resolve, reject) => {
     let buf = ''
     const timer = setTimeout(() => reject(new Error(HELP)), 15_000)
@@ -165,9 +165,12 @@ export async function shutdownChrome(): Promise<void> {
   launched = null
   // Ask Chrome to close itself first: a bare SIGTERM to the main process can
   // orphan renderer processes in headless mode (observed on Linux CI), while
-  // Browser.close tears down the whole process tree.
+  // Browser.close tears down the whole process tree. Must connect to the
+  // BROWSER-level websocket — the default CDP() page-target connect fails once
+  // every tab is closed, which is exactly the state at shutdown time.
   try {
-    const client: any = await CDP({ port })
+    const { webSocketDebuggerUrl } = await CDP.Version({ port })
+    const client: any = await CDP({ target: webSocketDebuggerUrl })
     await client.Browser.close()
     try { await client.close() } catch { /* connection dies with the browser */ }
   } catch {
@@ -180,7 +183,8 @@ export async function shutdownChrome(): Promise<void> {
       new Promise<boolean>((r) => setTimeout(() => r(true), 3000)),
     ])
     if (timedOut) {
-      proc.kill('SIGKILL')
+      // last resort: kill the whole process group so no renderer survives
+      try { process.kill(-proc.pid!, 'SIGKILL') } catch { proc.kill('SIGKILL') }
       await exited
     }
   }
