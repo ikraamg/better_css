@@ -49,16 +49,21 @@ async function clickTarget(client: any, selector: string): Promise<void> {
 }
 
 // Two consecutive animation frames with an identical layout signature AND no live
-// animations = settled. The signature hashes every element's getBoundingClientRect —
+// FINITE animations = settled. The signature hashes every element's getBoundingClientRect —
 // unlike a body-box summary it reflects transform transitions and fixed-position
-// movement, which never change the body's own box. The getAnimations() check closes
+// movement, which never change the body's own box. The finite-animation check closes
 // a cold-start gap the hash can't see: a just-started animation can still be
 // play-pending across both sampled frames (identical rects) yet about to move.
 // Float accumulation is deterministic within a frame; the modulo keeps the magnitude
 // well under 2^53 so fractional pixels aren't lost.
-// ponytail: a perpetual animation (spinner) means every interact run burns the full
-// 2s cap and gets the unsettled note — filter getAnimations to finite ones if that
-// ever hurts.
+// Infinite-iteration animations (a.effect.getTiming().iterations === Infinity — a
+// perpetual spinner, say) are excluded from the live-animation check on purpose: they
+// never end, so counting them would burn every settle up to the cap regardless of
+// whether the page has actually stopped moving. src/core/animate.ts's --settled path
+// relies on this too: it freezes a finite animation by seeking it past its end (which
+// removes it from document.getAnimations() entirely, verified empirically) and an
+// infinite one via Animation.setPlaybackRate(0) (which does NOT remove it) — the filter
+// here is what lets the post-seek settle resolve instead of hanging on the frozen spinner.
 const SETTLE_EXPR = `new Promise((resolve) => {
   const sig = () => {
     let h = 0
@@ -69,18 +74,21 @@ const SETTLE_EXPR = `new Promise((resolve) => {
     }
     return h + ':' + window.scrollY + ':' + els.length
   }
+  const liveFinite = () => document.getAnimations().filter((a) => a.effect && a.effect.getTiming().iterations !== Infinity).length
   requestAnimationFrame(() => {
     const a = sig()
     requestAnimationFrame(() => {
-      resolve(document.getAnimations().length === 0 && sig() === a)
+      resolve(liveFinite() === 0 && sig() === a)
     })
   })
 })`
 
 const SETTLE_CAP_MS = 2000
 
-async function waitForSettle(client: any): Promise<boolean> {
-  const deadline = Date.now() + SETTLE_CAP_MS
+// Exported so animate.ts's post-seek settle (a short, separate cap — see its
+// composition contract) reuses this exact check instead of re-implementing it.
+export async function waitForSettle(client: any, capMs = SETTLE_CAP_MS): Promise<boolean> {
+  const deadline = Date.now() + capMs
   do {
     const { result } = await client.Runtime.evaluate({ expression: SETTLE_EXPR, awaitPromise: true, returnByValue: true })
     if (result.value === true) return true

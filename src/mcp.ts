@@ -13,6 +13,7 @@ import { checkMatrix, diffMatrix, snapshotMatrix } from './core/matrix.js'
 import { verifyMatrix } from './core/verify.js'
 import { forcePseudoStates, type PseudoStates } from './core/state.js'
 import { hasInteractSteps, interactWasUnsettled, runInteractSteps, type InteractSteps } from './core/interact.js'
+import { animateNote, needsAnimationCapture, settleAnimations, type AnimateOpts } from './core/animate.js'
 
 const server = new McpServer({ name: 'bettercss', version: '0.1.0' })
 
@@ -31,25 +32,34 @@ const active = z.string().optional().describe('Force :active on this selector be
 // order, then a settle wait, then hover/focus/active, then capture.
 const click = z.array(z.string()).optional().describe('Real trusted click(s) on these selectors, in order, before reading the page. Each target is first scrolled into view (centered) and the scroll is left where it lands. Runs after scrollTo and before hover/focus/active. Aborts if a click navigates to a new page.')
 const scrollTo = z.string().optional().describe('Scroll to this selector (scrollIntoView) or pixel Y before reading the page. Runs before click(s).')
+// --settled/--at-time — layout/inspect/explain/check/verify get both; snapshot/diff get
+// settled ONLY (a specific animation frame isn't a deterministic snapshot). Runs after
+// interact steps and before hover/focus/active.
+const settled = z.boolean().optional().describe('Fast-forward every CSS transition/animation to its end state before reading the page. A perpetual animation (e.g. a spinner) can\'t end, so it\'s paused instead and noted. Recommended when the page has animations, for a deterministic read.')
+const atTime = z.number().optional().describe('Seek every animation to this many ms (instead of its end), clamped to each animation\'s own duration. Mutually exclusive with settled.')
 
 function page(
   u: string,
-  opts: { port?: number; viewport?: string; states?: PseudoStates; interact?: InteractSteps },
+  opts: { port?: number; viewport?: string; states?: PseudoStates; interact?: InteractSteps; animate?: AnimateOpts },
   fn: (client: any) => Promise<string>,
 ) {
   return withPage(u, async (client) => {
     await runInteractSteps(client, opts.interact ?? {})
+    await settleAnimations(client, opts.animate ?? {})
     if (opts.states) await forcePseudoStates(client, opts.states)
     let out = await fn(client)
     if (pageWasBusy(client)) out += '\nnote: page was still loading at the 10s cap; results may be early'
     if (interactWasUnsettled(client)) out += '\nnote: page had not settled after interactions'
-    return text(out)
-  }, { port: opts.port, viewport: opts.viewport ? parseViewport(opts.viewport) : undefined })
+    return text(out + animateNote(client))
+  }, {
+    port: opts.port, viewport: opts.viewport ? parseViewport(opts.viewport) : undefined,
+    captureAnimations: needsAnimationCapture(opts.animate ?? {}),
+  })
 }
 
-server.tool('layout', 'Compact deterministic layout tree of the rendered page: positions, sizes, layout modes, inline ⚠ warnings. THE ground-truth view — read this before and after CSS changes. Budgeted to 400 lines by default (auto-truncated to the deepest depth that fits, with a note); pass depth to see the full tree from the root, or selector to scope to a subtree. Pass scrollTo/click to interact with the page first (order: scrollTo, then click(s), then settle), then hover/focus/active to see the layout consequences of interaction states without a mouse.',
-  { url, port, viewport, selector: z.string().optional().describe('Scope to this element'), depth: z.number().optional().describe('Max tree depth (disables the default 400-line budget)'), hover, focus, active, click, scrollTo },
-  ({ url: u, port: p, viewport: v, selector, depth, hover: h, focus: fo, active: a, click: cl, scrollTo: st }) => page(u, { port: p, viewport: v, states: { hover: h, focus: fo, active: a }, interact: { click: cl, scrollTo: st } }, async (client) => {
+server.tool('layout', 'Compact deterministic layout tree of the rendered page: positions, sizes, layout modes, inline ⚠ warnings. THE ground-truth view — read this before and after CSS changes. Budgeted to 400 lines by default (auto-truncated to the deepest depth that fits, with a note); pass depth to see the full tree from the root, or selector to scope to a subtree. Pass scrollTo/click to interact with the page first (order: scrollTo, then click(s), then settle), then settled/atTime to fast-forward or seek animations, then hover/focus/active to see the layout consequences of interaction states without a mouse.',
+  { url, port, viewport, selector: z.string().optional().describe('Scope to this element'), depth: z.number().optional().describe('Max tree depth (disables the default 400-line budget)'), hover, focus, active, click, scrollTo, settled, atTime },
+  ({ url: u, port: p, viewport: v, selector, depth, hover: h, focus: fo, active: a, click: cl, scrollTo: st, settled: se, atTime: at }) => page(u, { port: p, viewport: v, states: { hover: h, focus: fo, active: a }, interact: { click: cl, scrollTo: st }, animate: { settled: se, atTime: at } }, async (client) => {
     const tree = buildTree(await extract(client))
     checkInvariants(tree)
     const from = selector ? findNode(tree, selector) : undefined
@@ -57,52 +67,54 @@ server.tool('layout', 'Compact deterministic layout tree of the rendered page: p
     return renderTree(tree, { depth, from, budget: depth === undefined ? 400 : undefined })
   }))
 
-server.tool('inspect', 'Deep-dive ONE element: box model, every non-default computed style, stacking context, and why it has its width/height. Pass scrollTo/click to interact with the page first (order: scrollTo, then click(s), then settle), then hover/focus/active to see the layout consequences of interaction states without a mouse.',
-  { url, port, viewport, selector: z.string().describe('CSS selector of the element'), hover, focus, active, click, scrollTo },
-  ({ url: u, port: p, viewport: v, selector, hover: h, focus: fo, active: a, click: cl, scrollTo: st }) => page(u, { port: p, viewport: v, states: { hover: h, focus: fo, active: a }, interact: { click: cl, scrollTo: st } }, (client) => inspect(client, selector)))
+server.tool('inspect', 'Deep-dive ONE element: box model, every non-default computed style, stacking context, and why it has its width/height. Pass scrollTo/click to interact with the page first (order: scrollTo, then click(s), then settle), then settled/atTime to fast-forward or seek animations, then hover/focus/active to see the layout consequences of interaction states without a mouse.',
+  { url, port, viewport, selector: z.string().describe('CSS selector of the element'), hover, focus, active, click, scrollTo, settled, atTime },
+  ({ url: u, port: p, viewport: v, selector, hover: h, focus: fo, active: a, click: cl, scrollTo: st, settled: se, atTime: at }) => page(u, { port: p, viewport: v, states: { hover: h, focus: fo, active: a }, interact: { click: cl, scrollTo: st }, animate: { settled: se, atTime: at } }, (client) => inspect(client, selector)))
 
-server.tool('explain', 'Trace one CSS property to its source: which rule wins (file:line, source-mapped), which rules lost and why (specificity/order/importance), and whether layout constraints override the declared value. Pass scrollTo/click to interact with the page first (order: scrollTo, then click(s), then settle), then hover/focus/active to see the layout consequences of interaction states without a mouse.',
-  { url, port, viewport, selector: z.string(), property: z.string().describe("e.g. 'width'"), hover, focus, active, click, scrollTo },
-  ({ url: u, port: p, viewport: v, selector, property, hover: h, focus: fo, active: a, click: cl, scrollTo: st }) => page(u, { port: p, viewport: v, states: { hover: h, focus: fo, active: a }, interact: { click: cl, scrollTo: st } }, async (client) =>
+server.tool('explain', 'Trace one CSS property to its source: which rule wins (file:line, source-mapped), which rules lost and why (specificity/order/importance), and whether layout constraints override the declared value. Pass scrollTo/click to interact with the page first (order: scrollTo, then click(s), then settle), then settled/atTime to fast-forward or seek animations, then hover/focus/active to see the layout consequences of interaction states without a mouse.',
+  { url, port, viewport, selector: z.string(), property: z.string().describe("e.g. 'width'"), hover, focus, active, click, scrollTo, settled, atTime },
+  ({ url: u, port: p, viewport: v, selector, property, hover: h, focus: fo, active: a, click: cl, scrollTo: st, settled: se, atTime: at }) => page(u, { port: p, viewport: v, states: { hover: h, focus: fo, active: a }, interact: { click: cl, scrollTo: st }, animate: { settled: se, atTime: at } }, async (client) =>
     renderExplanation(await explain(client, selector, property))))
 
-server.tool('check', 'Run layout invariants (overflow, bleed, clipped text, unintended overlap, zero-size/tiny interactive elements). Violations are ALWAYS bugs — fix them. Pass scrollTo/click to interact with the page first (order: scrollTo, then click(s), then settle), then hover/focus/active to see the layout consequences of interaction states without a mouse — combinable with viewports, re-running scrollTo/click(s)/state fresh inside each one.',
-  { url, port, viewport, viewports, hover, focus, active, click, scrollTo },
-  ({ url: u, port: p, viewport: v, viewports: vs, hover: h, focus: fo, active: a, click: cl, scrollTo: st }) => vs
-    ? checkMatrix(u, parseViewportList(vs), { port: p, states: { hover: h, focus: fo, active: a }, interact: { click: cl, scrollTo: st } }).then((r) => text(r.output))
-    : page(u, { port: p, viewport: v, states: { hover: h, focus: fo, active: a }, interact: { click: cl, scrollTo: st } }, async (client) => {
+server.tool('check', 'Run layout invariants (overflow, bleed, clipped text, unintended overlap, zero-size/tiny interactive elements). Violations are ALWAYS bugs — fix them. Pass scrollTo/click to interact with the page first (order: scrollTo, then click(s), then settle), then settled/atTime to fast-forward or seek animations, then hover/focus/active to see the layout consequences of interaction states without a mouse — combinable with viewports, re-running scrollTo/click(s)/settled/state fresh inside each one.',
+  { url, port, viewport, viewports, hover, focus, active, click, scrollTo, settled, atTime },
+  ({ url: u, port: p, viewport: v, viewports: vs, hover: h, focus: fo, active: a, click: cl, scrollTo: st, settled: se, atTime: at }) => vs
+    ? checkMatrix(u, parseViewportList(vs), { port: p, states: { hover: h, focus: fo, active: a }, interact: { click: cl, scrollTo: st }, animate: { settled: se, atTime: at } }).then((r) => text(r.output))
+    : page(u, { port: p, viewport: v, states: { hover: h, focus: fo, active: a }, interact: { click: cl, scrollTo: st }, animate: { settled: se, atTime: at } }, async (client) => {
       const violations = checkInvariants(buildTree(await extract(client)))
       return renderViolations(client, violations)
     }))
 
-server.tool('snapshot', 'Lock the current layout as a named .tree snapshot for later diffing. Do this when the page looks CORRECT.',
-  { url, port, viewport, viewports, name: z.string(), dir: z.string().optional().describe("Snapshot dir (default .bettercss relative to the MCP server's working directory — pass an absolute path when the server isn't launched from your project root)") },
-  ({ url: u, port: p, viewport: v, viewports: vs, name, dir }) => vs
-    ? snapshotMatrix(u, parseViewportList(vs), name, dir, { port: p }).then((s) => text(s))
-    : page(u, { port: p, viewport: v }, async (client) => {
+server.tool('snapshot', 'Lock the current layout as a named .tree snapshot for later diffing. Do this when the page looks CORRECT. Pass settled (recommended for animated pages, for a deterministic snapshot) — not atTime, which pins one animation frame instead of a stable end state.',
+  { url, port, viewport, viewports, name: z.string(), dir: z.string().optional().describe("Snapshot dir (default .bettercss relative to the MCP server's working directory — pass an absolute path when the server isn't launched from your project root)"), settled },
+  ({ url: u, port: p, viewport: v, viewports: vs, name, dir, settled: se }) => vs
+    ? snapshotMatrix(u, parseViewportList(vs), name, dir, { port: p, settled: se }).then((s) => text(s))
+    : page(u, { port: p, viewport: v, animate: { settled: se } }, async (client) => {
       const tree = buildTree(await extract(client))
       checkInvariants(tree)
       return `saved ${saveSnapshot(renderTree(tree), name, dir)}`
     }))
 
-server.tool('diff', 'Structural diff of the current layout vs a named snapshot: what moved/resized/appeared/disappeared, in px. Run after every CSS change to see its actual effect.',
-  { url, port, viewport, viewports, name: z.string(), dir: z.string().optional().describe("Snapshot dir (default .bettercss relative to the MCP server's working directory — pass an absolute path when the server isn't launched from your project root)") },
-  ({ url: u, port: p, viewport: v, viewports: vs, name, dir }) => vs
-    ? diffMatrix(u, parseViewportList(vs), name, dir, { port: p }).then((s) => text(s))
-    : page(u, { port: p, viewport: v }, async (client) => {
+server.tool('diff', 'Structural diff of the current layout vs a named snapshot: what moved/resized/appeared/disappeared, in px. Run after every CSS change to see its actual effect. Pass settled (recommended for animated pages, matching how the snapshot was likely taken) — not atTime, which pins one animation frame instead of a stable end state.',
+  { url, port, viewport, viewports, name: z.string(), dir: z.string().optional().describe("Snapshot dir (default .bettercss relative to the MCP server's working directory — pass an absolute path when the server isn't launched from your project root)"), settled },
+  ({ url: u, port: p, viewport: v, viewports: vs, name, dir, settled: se }) => vs
+    ? diffMatrix(u, parseViewportList(vs), name, dir, { port: p, settled: se }).then((s) => text(s))
+    : page(u, { port: p, viewport: v, animate: { settled: se } }, async (client) => {
       const tree = buildTree(await extract(client))
       checkInvariants(tree)
       return renderDiff(diffTrees(loadSnapshot(name, dir), renderTree(tree)))
     }))
 
-server.tool('verify', `Composite one-shot "is this page correct": runs layout invariants and, if a name is given, also diffs a locked snapshot — across a viewport sweep, in a single call. FIRST line of the output is always VERDICT: PASS or VERDICT: FAIL (violations + layout changes), so you can branch on line 1 without parsing details. Defaults to the ${DEFAULT_SWEEP} sweep when viewports is omitted — verify always runs as a matrix, even with one viewport, so snapshot files are always named <name>@WxH (never plain <name>.tree). Pass scrollTo/click to interact with the page first (order: scrollTo, then click(s), then settle), then hover/focus/active to see the layout consequences of interaction states without a mouse. IMPORTANT: states and interact steps affect the invariant check only — the snapshot diff always compares the resting (unforced, un-interacted) layout, since diffing a forced/interacted layout against a resting snapshot would always report a change; this costs a second page load per viewport when either is combined with name. A missing per-viewport snapshot is reported as a note, not a failure (snapshot only the viewports you care about).`,
-  { url, port, viewports, hover, focus, active, click, scrollTo, name: z.string().optional(), dir: z.string().optional().describe("Snapshot dir (default .bettercss relative to the MCP server's working directory — pass an absolute path when the server isn't launched from your project root)") },
-  ({ url: u, port: p, viewports: vs, hover: h, focus: fo, active: a, click: cl, scrollTo: st, name, dir }) => {
+server.tool('verify', `Composite one-shot "is this page correct": runs layout invariants and, if a name is given, also diffs a locked snapshot — across a viewport sweep, in a single call. FIRST line of the output is always VERDICT: PASS or VERDICT: FAIL (violations + layout changes), so you can branch on line 1 without parsing details. Defaults to the ${DEFAULT_SWEEP} sweep when viewports is omitted — verify always runs as a matrix, even with one viewport, so snapshot files are always named <name>@WxH (never plain <name>.tree). Pass scrollTo/click to interact with the page first (order: scrollTo, then click(s), then settle), then settled/atTime to fast-forward or seek animations, then hover/focus/active to see the layout consequences of interaction states without a mouse. settled is RECOMMENDED whenever the page has animations — the default behavior is unchanged (no seeking) otherwise. IMPORTANT: states, interact steps, and atTime affect the invariant check only — the snapshot diff always compares the resting (unforced, un-interacted, not-pinned-to-a-frame) layout, applying settled if given (since diffing a forced/interacted layout against a resting snapshot would always report a change); this costs a second page load per viewport when states/interact are combined with name. A missing per-viewport snapshot is reported as a note, not a failure (snapshot only the viewports you care about).`,
+  { url, port, viewports, hover, focus, active, click, scrollTo, settled, atTime, name: z.string().optional(), dir: z.string().optional().describe("Snapshot dir (default .bettercss relative to the MCP server's working directory — pass an absolute path when the server isn't launched from your project root)") },
+  ({ url: u, port: p, viewports: vs, hover: h, focus: fo, active: a, click: cl, scrollTo: st, settled: se, atTime: at, name, dir }) => {
     const hasStates = h !== undefined || fo !== undefined || a !== undefined
     const interact: InteractSteps = { click: cl, scrollTo: st }
+    const animate: AnimateOpts = { settled: se, atTime: at }
     return verifyMatrix(u, parseViewportList(vs ?? DEFAULT_SWEEP), {
       port: p, states: hasStates ? { hover: h, focus: fo, active: a } : undefined,
-      interact: hasInteractSteps(interact) ? interact : undefined, name, dir,
+      interact: hasInteractSteps(interact) ? interact : undefined,
+      animate: needsAnimationCapture(animate) ? animate : undefined, name, dir,
     }).then((r) => text(r.output))
   })
 

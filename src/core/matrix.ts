@@ -5,6 +5,7 @@ import { checkInvariants, renderViolations } from './invariants.js'
 import { diffTrees, loadSnapshot, renderDiff, saveSnapshot } from './snapshot.js'
 import { forcePseudoStates, type PseudoStates } from './state.js'
 import { interactWasUnsettled, runInteractSteps, type InteractSteps } from './interact.js'
+import { animateNote, needsAnimationCapture, settleAnimations, type AnimateOpts } from './animate.js'
 
 function prefixLines(label: string, text: string): string {
   return text.split('\n').map((line) => `[${label}] ${line}`).join('\n')
@@ -14,7 +15,8 @@ function prefixLines(label: string, text: string): string {
 // same wording, appended per viewport (each viewport gets its own 10s/2s cap).
 function busyNote(client: object): string {
   return (pageWasBusy(client) ? '\nnote: page was still loading at the 10s cap; results may be early' : '') +
-    (interactWasUnsettled(client) ? '\nnote: page had not settled after interactions' : '')
+    (interactWasUnsettled(client) ? '\nnote: page had not settled after interactions' : '') +
+    animateNote(client)
 }
 
 // check, once per viewport (sequential, input order). Exit-worthiness (`dirty`) is any
@@ -31,14 +33,16 @@ function busyNote(client: object): string {
 // another only happens with JS-conditional DOM; static fixtures never hit that case, so a
 // selector matching zero DOM nodes anywhere is always the actual error.
 export async function checkMatrix(
-  url: string, viewports: Viewport[], opts: { port?: number; states?: PseudoStates; interact?: InteractSteps },
+  url: string, viewports: Viewport[],
+  opts: { port?: number; states?: PseudoStates; interact?: InteractSteps; animate?: AnimateOpts },
 ): Promise<{ output: string; dirty: boolean }> {
   const results = await forEachViewport(url, viewports, async (client) => {
     await runInteractSteps(client, opts.interact ?? {})
+    await settleAnimations(client, opts.animate ?? {})
     if (opts.states) await forcePseudoStates(client, opts.states)
     const violations = checkInvariants(buildTree(await extract(client)))
     return { violations, rendered: (await renderViolations(client, violations)) + busyNote(client) }
-  }, opts)
+  }, { ...opts, captureAnimations: needsAnimationCapture(opts.animate ?? {}) })
   const body = results.map((r) => prefixLines(r.label, r.result.rendered)).join('\n')
   const summary = results
     .map((r) => `${r.label}=${r.result.violations.length ? `${r.result.violations.length} violations` : 'clean'}`)
@@ -50,25 +54,27 @@ export async function checkMatrix(
 // snapshot, once per viewport → `<name>@WxH.tree` per file (plain saveSnapshot naming,
 // no snapshot.ts changes needed).
 export async function snapshotMatrix(
-  url: string, viewports: Viewport[], name: string, dir: string | undefined, opts: { port?: number },
+  url: string, viewports: Viewport[], name: string, dir: string | undefined, opts: { port?: number; settled?: boolean },
 ): Promise<string> {
   const results = await forEachViewport(url, viewports, async (client, vp) => {
+    await settleAnimations(client, { settled: opts.settled })
     const tree = buildTree(await extract(client))
     checkInvariants(tree)
     return `saved ${saveSnapshot(renderTree(tree), `${name}@${vp.label}`, dir)}${busyNote(client)}`
-  }, opts)
+  }, { ...opts, captureAnimations: Boolean(opts.settled) })
   return results.map((r) => prefixLines(r.label, r.result)).join('\n')
 }
 
 // diff, once per viewport against its `<name>@WxH.tree` snapshot. A missing/mismatched
 // per-viewport snapshot throws loadSnapshot's existing resolved-path error.
 export async function diffMatrix(
-  url: string, viewports: Viewport[], name: string, dir: string | undefined, opts: { port?: number },
+  url: string, viewports: Viewport[], name: string, dir: string | undefined, opts: { port?: number; settled?: boolean },
 ): Promise<string> {
   const results = await forEachViewport(url, viewports, async (client, vp) => {
+    await settleAnimations(client, { settled: opts.settled })
     const tree = buildTree(await extract(client))
     checkInvariants(tree)
     return renderDiff(diffTrees(loadSnapshot(`${name}@${vp.label}`, dir), renderTree(tree))) + busyNote(client)
-  }, opts)
+  }, { ...opts, captureAnimations: Boolean(opts.settled) })
   return results.map((r) => prefixLines(r.label, r.result)).join('\n')
 }

@@ -5,6 +5,7 @@ import { checkInvariants, renderViolations } from './invariants.js'
 import { diffTrees, loadSnapshot, renderDiff } from './snapshot.js'
 import { forcePseudoStates, type PseudoStates } from './state.js'
 import { hasInteractSteps, interactWasUnsettled, runInteractSteps, type InteractSteps } from './interact.js'
+import { animateNote, needsAnimationCapture, settleAnimations, type AnimateOpts } from './animate.js'
 
 function prefixLines(label: string, text: string): string {
   return text.split('\n').map((line) => `[${label}] ${line}`).join('\n')
@@ -13,7 +14,8 @@ function prefixLines(label: string, text: string): string {
 // Mirrors matrix.ts's busy/unsettled-note helper (matrix paths bypass mcp.ts's page() wrapper).
 function busyNote(client: object): string {
   return (pageWasBusy(client) ? '\nnote: page was still loading at the 10s cap; results may be early' : '') +
-    (interactWasUnsettled(client) ? '\nnote: page had not settled after interactions' : '')
+    (interactWasUnsettled(client) ? '\nnote: page had not settled after interactions' : '') +
+    animateNote(client)
 }
 
 // A missing per-viewport snapshot is a note, not a failure (contract 3) — agents may
@@ -37,7 +39,7 @@ function diffOrNote(
   return { rendered: renderDiff(entries), changes: entries.length }
 }
 
-export interface VerifyOpts { port?: number; states?: PseudoStates; interact?: InteractSteps; name?: string; dir?: string }
+export interface VerifyOpts { port?: number; states?: PseudoStates; interact?: InteractSteps; animate?: AnimateOpts; name?: string; dir?: string }
 
 // Composite: check + (optional) diff, per viewport, in input order — verify is ALWAYS a
 // matrix, even with one viewport (snapshot files are always named <name>@WxH, never plain
@@ -55,6 +57,7 @@ export async function verifyMatrix(
   const modified = Boolean(opts.states) || hasInteractSteps(opts.interact)
   const checked = await forEachViewport(url, viewports, async (client, vp) => {
     await runInteractSteps(client, opts.interact ?? {})
+    await settleAnimations(client, opts.animate ?? {})
     if (opts.states) await forcePseudoStates(client, opts.states)
     const tree = buildTree(await extract(client))
     const violations = checkInvariants(tree)
@@ -66,15 +69,18 @@ export async function verifyMatrix(
       changes = d.changes
     }
     return { violations: violations.length, block, changes }
-  }, { port: opts.port })
+  }, { port: opts.port, captureAnimations: needsAnimationCapture(opts.animate ?? {}) })
 
   let diffed: Array<{ label: string; result: { rendered: string; changes: number } }> | undefined
   if (opts.name && modified) {
+    // Mirrors snapshot/diff's own contract: settled only, never at-time — a diff compares
+    // against a deterministic snapshot, not one pinned to a specific animation frame.
     diffed = await forEachViewport(url, viewports, async (client, vp) => {
+      await settleAnimations(client, { settled: opts.animate?.settled })
       const tree = buildTree(await extract(client))
       const d = diffOrNote(opts.name!, vp.label, opts.dir, renderTree(tree))
       return { rendered: d.rendered + busyNote(client), changes: d.changes }
-    }, { port: opts.port })
+    }, { port: opts.port, captureAnimations: Boolean(opts.animate?.settled) })
   }
 
   let totalViolations = 0

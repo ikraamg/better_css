@@ -145,6 +145,18 @@ test('check tool with scrollTo param scrolls past the fixture\'s threshold and s
   expect(text).toContain('16x16px')
 }, 60_000)
 
+test('layout tool with settled fast-forwards the transition to its end width', async () => {
+  const res = await client.callTool({ name: 'layout', arguments: { url: `${srv.url}/animated/index.html`, settled: true } })
+  expect((res.content as any)[0].text).toContain('div#target.child.grow (0,0 400x50)')
+})
+
+test('snapshot/diff tools with settled round-trip a clean diff on the animated fixture', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bettercss-mcp-settled-test-'))
+  await client.callTool({ name: 'snapshot', arguments: { url: `${srv.url}/animated/index.html`, name: 'anim', dir, settled: true } })
+  const res = await client.callTool({ name: 'diff', arguments: { url: `${srv.url}/animated/index.html`, name: 'anim', dir, settled: true } })
+  expect((res.content as any)[0].text).toContain('(no layout changes)')
+})
+
 test('verify tool with name diffs the resting layout and notes a missing per-viewport snapshot', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'bettercss-verify-mcp-test-'))
   await client.callTool({

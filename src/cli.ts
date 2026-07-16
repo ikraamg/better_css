@@ -10,6 +10,7 @@ import { checkMatrix, diffMatrix, snapshotMatrix } from './core/matrix.js'
 import { verifyMatrix } from './core/verify.js'
 import { forcePseudoStates, type PseudoStates } from './core/state.js'
 import { hasInteractSteps, interactWasUnsettled, runInteractSteps, type InteractSteps } from './core/interact.js'
+import { animateNote, needsAnimationCapture, settleAnimations, type AnimateOpts } from './core/animate.js'
 
 const USAGE = `bettercss <command> <url> [options]
   layout    <url> [--selector S] [--depth N]   print the LayoutTree (budgeted to 400 lines unless --depth is given)
@@ -40,7 +41,13 @@ const USAGE = `bettercss <command> <url> [options]
              into view, centered, and the scroll is left where it lands), --scroll-to S_or_Y
              (selector or pixel y) — interaction pre-steps, layout/inspect/explain/check/verify
              only, not snapshot/diff. Order: navigate, scroll-to, clicks (in argument order),
-             settle, then --hover/--focus/--active, then capture`
+             settle, then --hover/--focus/--active, then capture
+           --settled (fast-forward every CSS transition/animation to its end state before
+             capturing — layout/inspect/explain/check/verify/snapshot/diff/verify; a perpetual
+             animation can't end, so it's paused instead and noted), --at-time N (seek every
+             animation to N ms, clamped to its own duration, instead of its end — same
+             commands EXCEPT snapshot/diff, where a specific animation frame isn't a
+             deterministic snapshot). Runs after interact steps and before --hover/--focus/--active`
 
 interface Flags {
   [key: string]: string | string[] | undefined
@@ -53,10 +60,13 @@ interface Flags {
   depth?: string; port?: string
   viewport?: string; viewports?: string
   dir?: string
+  settled?: string; 'at-time'?: string
 }
 
 // Repeated occurrences of these flags accumulate into an array instead of last-wins.
 const REPEATABLE = new Set(['click'])
+// Presence-only flags: no value follows, so the parser must not consume the next argv slot.
+const BOOLEAN = new Set(['settled'])
 
 function flags(argv: string[]): Flags {
   // required fields (selector/property/name) are only actually read on commands whose
@@ -66,6 +76,7 @@ function flags(argv: string[]): Flags {
   for (let i = 0; i < argv.length; i++) {
     if (!argv[i].startsWith('--')) continue
     const key = argv[i].slice(2)
+    if (BOOLEAN.has(key)) { out[key] = 'true'; continue }
     const val = argv[++i]
     if (REPEATABLE.has(key)) {
       const arr = (out[key] as string[] | undefined) ?? []
@@ -109,12 +120,21 @@ async function main(): Promise<number> {
     console.error(`--click/--scroll-to are only valid for layout/inspect/explain/check/verify, not ${cmd} — interacted-state snapshots invite stale-state confusion.`)
     return 2
   }
-  for (const name of ['depth', 'port']) {
+  for (const name of ['depth', 'port', 'at-time']) {
     if (f[name] !== undefined && Number.isNaN(Number(f[name]))) {
       console.error(`--${name} must be a number, got '${f[name]}'`)
       return 2
     }
   }
+  if (f['at-time'] !== undefined && ['snapshot', 'diff'].includes(cmd)) {
+    console.error(`--at-time is not valid for ${cmd} — a snapshot must be a deterministic capture, not one pinned to a specific animation frame; use --settled instead.`)
+    return 2
+  }
+  if (f.settled !== undefined && f['at-time'] !== undefined) {
+    console.error(`--settled and --at-time are mutually exclusive — pick one.`)
+    return 2
+  }
+  const animate: AnimateOpts = { settled: f.settled !== undefined, atTime: f['at-time'] !== undefined ? Number(f['at-time']) : undefined }
   let viewport: { width: number; height: number } | undefined
   if (f.viewport !== undefined) {
     try { viewport = parseViewport(f.viewport) }
@@ -133,7 +153,7 @@ async function main(): Promise<number> {
     console.error(`--click/--scroll-to is not supported together with --viewports yet.`)
     return 2
   }
-  const opts = { port: f.port ? Number(f.port) : undefined, viewport }
+  const opts = { port: f.port ? Number(f.port) : undefined, viewport, captureAnimations: needsAnimationCapture(animate) }
 
   if (cmd === 'verify') {
     const states: PseudoStates = { hover: f.hover, focus: f.focus, active: f.active }
@@ -142,6 +162,7 @@ async function main(): Promise<number> {
       port: opts.port,
       states: stateFlags.length ? states : undefined,
       interact: hasInteractSteps(interact) ? interact : undefined,
+      animate: needsAnimationCapture(animate) ? animate : undefined,
       name: f.name,
       dir: f.dir,
     })
@@ -154,19 +175,20 @@ async function main(): Promise<number> {
     const mopts = { port: opts.port }
     if (cmd === 'check') {
       const states: PseudoStates = { hover: f.hover, focus: f.focus, active: f.active }
-      const { output, dirty } = await checkMatrix(url, viewports, { ...mopts, states, interact })
+      const { output, dirty } = await checkMatrix(url, viewports, { ...mopts, states, interact, animate })
       if (dirty) process.exitCode = 1
       console.log(output)
       return Number(process.exitCode ?? 0)
     }
-    if (cmd === 'snapshot') console.log(await snapshotMatrix(url, viewports, f.name, f.dir, mopts))
-    else console.log(await diffMatrix(url, viewports, f.name, f.dir, mopts))
+    if (cmd === 'snapshot') console.log(await snapshotMatrix(url, viewports, f.name, f.dir, { ...mopts, settled: animate.settled }))
+    else console.log(await diffMatrix(url, viewports, f.name, f.dir, { ...mopts, settled: animate.settled }))
     return Number(process.exitCode ?? 0)
   }
 
   const states: PseudoStates = { hover: f.hover, focus: f.focus, active: f.active }
   const output = await withPage(url, async (client) => {
     await runInteractSteps(client, interact)
+    await settleAnimations(client, animate)
     await forcePseudoStates(client, states)
     let result: string
     switch (cmd) {
@@ -201,7 +223,8 @@ async function main(): Promise<number> {
       }
       default: result = USAGE
     }
-    return interactWasUnsettled(client) ? `${result}\nnote: page had not settled after interactions` : result
+    if (interactWasUnsettled(client)) result += '\nnote: page had not settled after interactions'
+    return result + animateNote(client)
   }, opts)
 
   console.log(output)

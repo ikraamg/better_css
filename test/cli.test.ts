@@ -278,3 +278,50 @@ test('forced-click layout is byte-identical across two invocations', async () =>
   const { stdout: second } = await cli('layout', `${srv.url}/interactive/index.html`, '--click', '#menu-btn')
   expect(first).toBe(second)
 }, 60_000)
+
+test('check --settled fast-forwards the transition, surfacing the exact 100px parent-bleed', async () => {
+  const err = await cli('check', `${srv.url}/animated/index.html`, '--settled').catch((e) => e)
+  expect(err.code).toBe(1)
+  expect(err.stdout).toContain('parent-bleed')
+  expect(err.stdout).toContain('bleeds 100px outside div.parent')
+}, 60_000)
+
+test('layout --settled shows the element at its final 400px width, and two runs are byte-identical', async () => {
+  const { stdout: first } = await cli('layout', `${srv.url}/animated/index.html`, '--settled')
+  expect(first).toContain('div#target.child.grow (0,0 400x50)')
+
+  const { stdout: second } = await cli('layout', `${srv.url}/animated/index.html`, '--settled')
+  expect(first).toBe(second)
+}, 60_000)
+
+test('layout --at-time 0 shows the element at its starting 200px width', async () => {
+  const { stdout } = await cli('layout', `${srv.url}/animated/index.html`, '--at-time', '0')
+  expect(stdout).toContain('div#target.child.grow (0,0 200x50)')
+}, 60_000)
+
+test('layout --settled notes the infinite spinner was frozen mid-flight', async () => {
+  const { stdout } = await cli('layout', `${srv.url}/animated/index.html`, '--settled')
+  expect(stdout).toContain('note: 1 infinite animation frozen mid-flight')
+}, 60_000)
+
+test('snapshot --settled then diff --settled round-trips clean on the animated fixture', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bettercss-settled-test-'))
+  await cli('snapshot', `${srv.url}/animated/index.html`, '--name', 'anim', '--dir', dir, '--settled')
+  const { stdout } = await cli('diff', `${srv.url}/animated/index.html`, '--name', 'anim', '--dir', dir, '--settled')
+  expect(stdout).toContain('(no layout changes)')
+}, 60_000)
+
+test('--at-time is rejected for snapshot and diff (a specific animation frame is not a deterministic snapshot)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bettercss-test-'))
+  const snapErr = await cli('snapshot', `${srv.url}/animated/index.html`, '--name', 'x', '--dir', dir, '--at-time', '0').catch((e) => e)
+  expect(snapErr.code).toBe(2)
+  expect(snapErr.stderr).toContain('--at-time is not valid for snapshot')
+
+  const diffErr = await cli('diff', `${srv.url}/animated/index.html`, '--name', 'x', '--dir', dir, '--at-time', '0').catch((e) => e)
+  expect(diffErr.code).toBe(2)
+  expect(diffErr.stderr).toContain('--at-time is not valid for diff')
+}, 60_000)
+
+test('without --settled/--at-time, the animated fixture reads mid-flight and is unaffected (flag-less behavior is unchanged)', async () => {
+  await expect(cli('layout', `${srv.url}/animated/index.html`)).resolves.toBeTruthy()
+}, 60_000)

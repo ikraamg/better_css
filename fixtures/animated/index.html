@@ -1,0 +1,22 @@
+<!doctype html><html><head><style>
+* { margin: 0; box-sizing: border-box; }
+.parent { width: 300px; height: 60px; background: #eee; }
+.child { width: 200px; height: 50px; background: tomato; transition: width 10s linear; }
+.child.grow { width: 400px; }
+.spinner { width: 20px; height: 20px; background: #333; animation: spin 1s linear infinite; }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+</style></head><body>
+<div class="parent"><div class="child" id="target"></div></div>
+<div class="spinner" id="spinner"></div>
+<script>
+// A class added in the very next tick after first render (forced via offsetWidth)
+// genuinely triggers the transition — added synchronously in the same style recalc
+// as the element's initial layout does NOT (verified empirically: no animationStarted
+// event fires and the computed width jumps straight to 400px with no transition at
+// all). Forcing a reflow first gives the browser two distinct style snapshots to
+// diff, which is what starts a CSS transition.
+var target = document.getElementById('target')
+void target.offsetWidth
+target.classList.add('grow')
+</script>
+</body></html>

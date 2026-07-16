@@ -21,6 +21,15 @@ let launched: { proc: ChildProcess; port: number; dir: string } | null = null
 let launching: Promise<number> | null = null
 const busyPages = new WeakSet<object>()
 
+// Populated only when withPage's captureAnimations opt is set (src/core/animate.ts's
+// settleAnimations reads this). Animation.animationStarted events carry
+// animation.source.duration/delay/iterations — that's the only place seekable timing
+// comes from, so they must be cached as they arrive rather than queried on demand.
+const animationCache = new WeakMap<object, any[]>()
+export function cachedAnimations(client: object): any[] {
+  return animationCache.get(client) ?? []
+}
+
 async function reachable(port: number): Promise<boolean> {
   try { await CDP.Version({ port }); return true } catch { return false }
 }
@@ -100,13 +109,22 @@ export function pageWasBusy(client: object): boolean {
 export async function withPage<T>(
   url: string,
   fn: (client: any) => Promise<T>,
-  opts: { port?: number; viewport?: { width: number; height: number } } = {},
+  opts: { port?: number; viewport?: { width: number; height: number }; captureAnimations?: boolean } = {},
 ): Promise<T> {
   const port = await resolvePort(opts.port)
   const target = await CDP.New({ port, url: 'about:blank' })
   let client: any
   try {
     client = await CDP({ port, target })
+    if (opts.captureAnimations) {
+      // Must be armed before Page.navigate — animationStarted fires as each animation is
+      // CREATED (verified empirically), so enabling after navigation misses page-load-triggered
+      // ones entirely (e.g. a transition/animation kicked off by an inline <script>).
+      const events: any[] = []
+      animationCache.set(client, events)
+      client.Animation.animationStarted((e: any) => events.push(e.animation))
+      await client.Animation.enable()
+    }
     await client.Page.enable()
     await client.Network.enable()
     const vp = opts.viewport ?? { width: 1280, height: 800 }
@@ -149,11 +167,11 @@ export async function forEachViewport<T>(
   url: string,
   viewports: Viewport[],
   fn: (client: any, vp: Viewport) => Promise<T>,
-  opts: { port?: number } = {},
+  opts: { port?: number; captureAnimations?: boolean } = {},
 ): Promise<Array<{ label: string; result: T }>> {
   const out: Array<{ label: string; result: T }> = []
   for (const vp of viewports) {
-    const result = await withPage(url, (client) => fn(client, vp), { port: opts.port, viewport: vp })
+    const result = await withPage(url, (client) => fn(client, vp), { port: opts.port, viewport: vp, captureAnimations: opts.captureAnimations })
     out.push({ label: vp.label, result })
   }
   return out
