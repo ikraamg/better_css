@@ -6,8 +6,9 @@ description: Ground-truth CSS/layout workflow using the bettercss MCP tools (mcp
 # bettercss: CSS ground truth for agents
 
 bettercss extracts the browser's ACTUAL rendered layout as deterministic text.
-Six inspection tools + one composite verdict, as MCP tools (`mcp__bettercss__*`)
-or the `bettercss` CLI.
+Eight tools — six inspectors, one composite verdict (`verify`), one load-time
+stability report (`stability`) — as MCP tools (`mcp__bettercss__*`) or the
+`bettercss` CLI.
 
 ## The one hard rule
 
@@ -41,13 +42,28 @@ movement = your edit had side effects; explain them before proceeding.
 `name`+`dir` to include snapshot diffs. First output line is `VERDICT: PASS`
 or `VERDICT: FAIL (...)`. Do not report CSS work complete on a FAIL.
 For interactive elements also run with `hover`/`focus` (states apply to the
-invariant check; snapshot diffs always compare the resting layout).
+invariant check; snapshot diffs always compare the resting layout). On pages
+with late-loading images, fonts, or ads, also run `stability` — it reports
+Cumulative Layout Shift with the exact element that moved, when, and any
+unsized `img`/`video` suspect.
 
-## Interaction states
+## Interaction and animation states
 
-`hover` / `focus` / `active` params (a CSS selector each) force pseudo-state
+`hover`/`focus`/`active` params (a CSS selector each) force pseudo-state
 without a mouse — works on layout/check/inspect/explain/verify, and combines
 with `viewports` (hover effects often fit at desktop but bleed at mobile).
+
+For JS-driven UI a pseudo-state can't reach (menus, tabs, anything behind a
+click), use `click` (repeatable, real trusted click) and `scrollTo` (selector
+or pixel Y) — same tools, run before capture in order: scrollTo → click(s) →
+settle.
+
+For animated pages, add `settled` to fast-forward every CSS transition/
+animation to its end state before capturing — recommended before
+`snapshot`/`diff`/`verify` on anything with a CSS animation, so the capture
+isn't a flaky mid-flight frame. `atTime N` seeks to a specific ms instead
+(layout/inspect/explain/check/verify only, not snapshot/diff — a specific
+frame isn't a reproducible baseline).
 
 ## Reading violations
 

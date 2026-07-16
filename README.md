@@ -71,12 +71,21 @@ screenshot comparison.
 | `explain` | Trace any property to its source: which declaration wins (`file:line`, source-mapped), which lost and why, and what layout constraint overrides the declared value (flex-basis, min/max, grid). |
 | `snapshot` | Lock the current layout to a named `.tree` file (per-viewport with `--viewports`). |
 | `diff` | Structural diff vs a snapshot: what moved/resized/appeared/disappeared, in px. |
-| `stability` | Load-time layout-shift report (Cumulative Layout Shift): what moved, when, and by how much, plus unsized `img`/`video` suspects. Timing-dependent (an observation, not a deterministic snapshot). Score is the raw sum over the observation window; the CWV metric uses session windows — multi-burst pages may score higher here. |
+| `stability` | Load-time layout-shift report (Cumulative Layout Shift): what moved, when, and by how much, plus unsized `img`/`video` suspects. Timing-dependent (an observation, not a deterministic snapshot). Score is the raw sum over the observation window; the CWV metric uses session windows — multi-burst pages may score higher here. Scoped to the top frame — shifts inside an iframe aren't observed. |
 
 **Interaction states:** pass `--hover/--focus/--active <selector>` (CLI) or the
 matching params (MCP) to force pseudo-states without a mouse — combinable with
 `--viewports`, because hover effects that fit at desktop routinely bleed at
-mobile widths.
+mobile widths. For JS-driven UI a pseudo-state can't reach (menus, tabs,
+anything behind a click), `--click <selector>` (repeatable, real trusted
+click) and `--scroll-to <selector_or_y>` run real interaction pre-steps before
+capture — layout/inspect/explain/check/verify only, in order: scroll-to →
+click(s) → settle. For animated pages, `--settled` fast-forwards every CSS
+transition/animation to its end state before capturing (recommended before
+`snapshot`/`diff`/`verify` on anything with a CSS animation); `--at-time N`
+seeks to a specific ms instead, everywhere except `snapshot`/`diff` (a
+specific frame isn't a reproducible baseline). Runs after interact steps and
+before forced states.
 
 **Violations are designed to be real bugs.** The invariants are tuned against
 real-world pages (intentional overlays, carousels, SVG internals, and
