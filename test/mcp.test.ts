@@ -8,13 +8,14 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { serveFixtures } from './helpers/server.js'
 
 function leakedProcesses(): string {
-  // pgrep exits 1 (no match) once shutdownChrome has killed the headless Chrome
-  // and removed its bettercss-* temp profile dir; exits 0 while it's still alive.
-  // Returns the offending process list so a failure names the culprit.
-  // bettercss[-] keeps the pattern from matching the shell running this very
-  // command (a compound sh -c stays resident with the pattern in its cmdline).
-  try { return execSync('pgrep -fl "bettercss[-]"', { stdio: 'pipe' }).toString().trim() }
-  catch { return '' }
+  // Empty once shutdownChrome has killed the headless Chrome tree. On failure
+  // the PID/PPID/args triple names the culprit AND its parent (ppid 1 = orphan).
+  // The [b] character class keeps the pattern from matching this command's own
+  // resident shell.
+  try {
+    return execSync('ps -eo pid,ppid,args | grep "[b]ettercss-" | grep -v grep', { stdio: 'pipe' })
+      .toString().trim()
+  } catch { return '' }
 }
 function chromeLeaked(): boolean {
   return leakedProcesses() !== ''
