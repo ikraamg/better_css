@@ -164,5 +164,16 @@ export async function shutdownChrome(): Promise<void> {
   if (proc.exitCode === null && proc.signalCode === null) {
     await new Promise((r) => proc.once('exit', r))
   }
-  rmSync(dir, { recursive: true, force: true })
+  // Chrome's helper processes outlive the main process briefly and can still be
+  // writing to the profile dir (ENOTEMPTY race, seen on Linux CI). Cleanup is
+  // best-effort: retry twice, then leave it to the OS temp reaper — never fatal.
+  for (let attempt = 0; ; attempt++) {
+    try {
+      rmSync(dir, { recursive: true, force: true })
+      return
+    } catch {
+      if (attempt >= 2) return
+      await new Promise((r) => setTimeout(r, 150))
+    }
+  }
 }
