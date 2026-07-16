@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from 'vitest'
-import { execFile, execFileSync } from 'node:child_process'
+import { execFile, execFileSync, execSync, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
@@ -19,8 +19,12 @@ function git(dir: string, args: string[]): string {
   return execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' }).trim()
 }
 
+const repos: string[] = []
+afterAll(() => { for (const dir of repos) rmSync(dir, { recursive: true, force: true }) })
+
 function initRepo(): string {
   const dir = mkdtempSync(join(tmpdir(), 'bettercss-blame-repo-'))
+  repos.push(dir)
   git(dir, ['init', '-q'])
   // Local to the throwaway repo only — never touches the developer's global git config.
   git(dir, ['config', 'user.email', 'blame-test@example.com'])
@@ -137,4 +141,113 @@ test('blame tool (MCP) mirrors the CLI: names the culprit commit', async () => {
   const text = (res.content as any)[0].text
   expect(text).toContain(`broken by ${culprit.short} "widen box"`)
   expect(text).toContain('parent-bleed')
+}, 90_000)
+
+// --- interrupt / honesty hardening ---
+
+// Chrome trees launched by bettercss (mcp.test.ts's [b] trick keeps the pattern from
+// matching this grep's own argv or an operator's shell prompt).
+function chromePids(): Set<string> {
+  try {
+    return new Set(
+      execSync('ps -eo pid,args | grep "user-data-dir=.*[b]ettercss-" | grep -v grep', { stdio: 'pipe' })
+        .toString().trim().split('\n').filter(Boolean).map((l) => l.trim().split(/\s+/)[0]),
+    )
+  } catch { return new Set() }
+}
+
+// blame's scratch checkout dirs (bettercss-blame-XXXXXX), NOT the throwaway test repos
+// (bettercss-blame-repo-XXXXXX) this file creates itself.
+function scratchDirs(): Set<string> {
+  return new Set(readdirSync(tmpdir()).filter((d) => d.startsWith('bettercss-blame-') && !d.startsWith('bettercss-blame-repo-')))
+}
+
+// SIGINT mid-walk (CLI): everything the walk created must be gone — no registered
+// worktrees, no scratch dir, no orphaned Chrome — and the exit code is 130.
+test('SIGINT mid-walk cleans worktrees, scratch dir, and Chrome, exiting 130', async () => {
+  const { dir } = buildRegressionRepo()
+  const pidsBefore = chromePids()
+  const scratchBefore = scratchDirs()
+
+  // Single-process spawn (no npx→tsx chain) so the signal reaches the CLI itself.
+  const child = spawn(process.execPath, ['--import', 'tsx', 'src/cli.ts', 'blame', '--root', dir, '--page', 'index.html'], { stdio: ['ignore', 'pipe', 'pipe'] })
+  let stderr = ''
+  child.stderr.on('data', (d) => { stderr += d.toString() })
+  // git prints "Preparing worktree" to stderr as each historical checkout starts —
+  // the walk is provably mid-flight once it appears.
+  const deadline = Date.now() + 30_000
+  while (!stderr.includes('Preparing worktree') && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 100))
+  }
+  expect(stderr).toContain('Preparing worktree')
+  child.kill('SIGINT')
+  const code = await new Promise<number | null>((r) => child.on('close', (c) => r(c)))
+  expect(code).toBe(130)
+
+  // no worktree left registered in the repo
+  const worktrees = git(dir, ['worktree', 'list', '--porcelain']).split('\n').filter((l) => l.startsWith('worktree '))
+  expect(worktrees).toHaveLength(1)
+  // no scratch checkout dir left in tmp
+  expect([...scratchDirs()].filter((d) => !scratchBefore.has(d))).toEqual([])
+  // no NEW Chrome tree left behind (teardown is asynchronous — poll like mcp.test.ts)
+  const chromeDeadline = Date.now() + 15_000
+  while ([...chromePids()].some((p) => !pidsBefore.has(p)) && Date.now() < chromeDeadline) {
+    await new Promise((r) => setTimeout(r, 250))
+  }
+  expect([...chromePids()].filter((p) => !pidsBefore.has(p))).toEqual([])
+}, 90_000)
+
+// SIGINT to the MCP server AFTER a blame call completed: blame's handler must be disarmed
+// by then, so only mcp.ts's graceful shutdown runs — exit 0, no Chrome debris.
+test('MCP server still shuts down gracefully (exit 0, no Chrome) on SIGINT after a blame call', async () => {
+  const dir = initRepo()
+  writeAndCommit(dir, { 'index.html': HTML, 'styles.css': GOOD_CSS }, 'add page')
+  const pidsBefore = chromePids()
+
+  const transport = new StdioClientTransport({ command: process.execPath, args: ['--import', 'tsx', 'src/mcp.ts'] })
+  const client = new Client({ name: 'blame-sigint-test', version: '0' })
+  await client.connect(transport)
+  // NOTE: reaches into the SDK transport's private _process — the only way to observe the
+  // server's actual exit code (the public API only surfaces onclose, not the code).
+  const proc = (transport as any)._process
+  const exited = new Promise<number | null>((r) => proc.on('close', (c: number | null) => r(c)))
+
+  const res = await client.callTool({ name: 'blame', arguments: { root: dir, page: 'index.html' } })
+  expect((res.content as any)[0].text).toContain('nothing to blame')
+
+  process.kill(transport.pid!, 'SIGINT')
+  expect(await exited).toBe(0)
+
+  const chromeDeadline = Date.now() + 15_000
+  while ([...chromePids()].some((p) => !pidsBefore.has(p)) && Date.now() < chromeDeadline) {
+    await new Promise((r) => setTimeout(r, 250))
+  }
+  expect([...chromePids()].filter((p) => !pidsBefore.has(p))).toEqual([])
+}, 90_000)
+
+// A page referencing a resource OUTSIDE --root (../shared.css) 404s silently in every
+// comparison — blame must warn instead of confidently reporting a clean/wrong verdict.
+test('a linked resource outside --root produces a prominent warning, not a silent false verdict', async () => {
+  const dir = initRepo()
+  const html = '<!doctype html><html><head><link rel="stylesheet" href="../shared.css"></head>\n<body><div class="wrap"><div class="box">hi</div></div></body></html>'
+  writeAndCommit(dir, { 'shared.css': GOOD_CSS, 'site/index.html': html }, 'add page')
+  const { stdout } = await cli('blame', '--root', join(dir, 'site'), '--page', 'index.html')
+  expect(stdout).toContain('warning: 1 linked resources failed to load from --root')
+  expect(stdout).toContain('/shared.css')
+  expect(stdout).toContain('point --root at the repo root')
+}, 90_000)
+
+// Disk-state bad but HEAD's COMMITTED state clean: the breakage is uncommitted — blame
+// must say so instead of framing the innocent newest commit.
+test('uncommitted breakage blames the working tree, not an innocent commit', async () => {
+  const dir = initRepo()
+  writeAndCommit(dir, { 'index.html': HTML, 'styles.css': GOOD_CSS }, 'add page')
+  writeAndCommit(dir, { 'styles.css': GOOD_CSS_2 }, 'innocent tweak')
+  writeFileSync(join(dir, 'styles.css'), BAD_CSS) // the actual breakage, never committed
+
+  const err = await cli('blame', '--root', dir, '--page', 'index.html').catch((e) => e)
+  expect(err.code).toBe(1)
+  expect(err.stdout).toContain('broken by uncommitted changes in your working tree (not any commit)')
+  expect(err.stdout).toContain('note: working tree has uncommitted changes')
+  expect(err.stdout).not.toContain('innocent tweak') // no commit framed
 }, 90_000)

@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative, resolve } from 'node:path'
-import { withPage } from './connect.js'
+import { shutdownChrome, withPage } from './connect.js'
 import { extract } from './extract.js'
 import { buildTree, renderTree } from './tree.js'
 import { checkInvariants, type Violation } from './invariants.js'
@@ -39,12 +39,13 @@ function commitInfo(repoRoot: string, sha: string): CommitInfo {
   return { sha: full, short, subject, date, author }
 }
 
-// HEAD's ancestors, newest first, HEAD itself excluded (the caller already knows HEAD's
-// state — that's the "current bad state" the walk is comparing against). Linear walk only
-// (--first-parent): a throwaway/scripted history is linear, and layout states can flicker
-// commit-to-commit, so bisect would be unsound here anyway (contract's own reasoning).
-function ancestors(repoRoot: string, maxCommits: number): CommitInfo[] {
-  const out = git(repoRoot, ['log', '--first-parent', '--skip=1', '-n', String(maxCommits), `--format=%H${SEP}%h${SEP}%s${SEP}%ar${SEP}%an`])
+// HEAD's ancestors, newest first — HEAD itself included only when the working tree has
+// uncommitted changes (the disk state the caller measured isn't HEAD's committed state
+// then, so HEAD must be walked like any other commit). Linear walk only (--first-parent):
+// a throwaway/scripted history is linear, and layout states can flicker commit-to-commit,
+// so bisect would be unsound here anyway (contract's own reasoning).
+function ancestors(repoRoot: string, maxCommits: number, includeHead: boolean): CommitInfo[] {
+  const out = git(repoRoot, ['log', '--first-parent', `--skip=${includeHead ? 0 : 1}`, '-n', String(maxCommits), `--format=%H${SEP}%h${SEP}%s${SEP}%ar${SEP}%an`])
   if (!out) return []
   return out.split('\n').map((line) => {
     const [full, short, subject, date, author] = line.split(SEP)
@@ -52,29 +53,13 @@ function ancestors(repoRoot: string, maxCommits: number): CommitInfo[] {
   })
 }
 
-// Tracks worktrees currently checked out by an in-flight blame() call, so a SIGINT mid-walk
-// still gets them cleaned up (safety bar: the user's repo must never be left with a stray
-// `git worktree add --detach` entry). One process-wide handler, armed once.
-const activeWorktrees = new Set<{ repoRoot: string; path: string }>()
-let sigintArmed = false
-
 function removeWorktree(repoRoot: string, path: string): void {
   try { execFileSync('git', ['-C', repoRoot, 'worktree', 'remove', '--force', path], { stdio: 'pipe' }) } catch {}
   try { execFileSync('git', ['-C', repoRoot, 'worktree', 'prune'], { stdio: 'pipe' }) } catch {}
   try { rmSync(path, { recursive: true, force: true }) } catch {}
 }
 
-function armSigintCleanup(): void {
-  if (sigintArmed) return
-  sigintArmed = true
-  process.on('SIGINT', () => {
-    for (const wt of activeWorktrees) removeWorktree(wt.repoRoot, wt.path)
-    activeWorktrees.clear()
-    process.exit(130)
-  })
-}
-
-interface CheckResult { violations: Violation[]; tree: string }
+interface CheckResult { violations: Violation[]; tree: string; misses: string[] }
 
 // Serves `dir` and runs the same check the rest of bettercss runs, scoped to one page and
 // (if given) filtered to a selector's subtree — same substring convention fix.ts's
@@ -87,7 +72,7 @@ async function checkAt(dir: string, page: string, selector: string | undefined, 
       const tree = buildTree(await extract(client))
       let violations = checkInvariants(tree)
       if (selector) violations = violations.filter((v) => v.selector.includes(selector))
-      return { violations, tree: renderTree(tree) }
+      return { violations, tree: renderTree(tree), misses: srv.misses }
     }, { port, viewport })
   } finally {
     srv.close()
@@ -101,11 +86,12 @@ const keyOf = (v: Violation): string => `${v.rule} ${v.selector}`
 const keysOf = (vs: Violation[]): Set<string> => new Set(vs.map(keyOf))
 const sameState = (a: Set<string>, b: Set<string>): boolean => a.size === b.size && [...a].every((k) => b.has(k))
 
-function foundOutput(culprit: CommitInfo, goodTree: string, badTree: string, badViolations: Violation[], goodKeys: Set<string>): string {
+// The good-vs-bad layout delta plus the violations the bad side introduced — shared by
+// the named-commit verdict and the uncommitted-changes verdict.
+function deltaBlock(goodTree: string, badTree: string, badViolations: Violation[], goodKeys: Set<string>): string {
   const introduced = badViolations.filter((v) => !goodKeys.has(keyOf(v)))
   const delta = renderDiff(diffTrees(goodTree, badTree))
-  const violLines = introduced.map((v) => `${v.rule}: ${v.message}`).join('\n')
-  return `broken by ${culprit.short} "${culprit.subject}" (${culprit.date}, ${culprit.author})\n${delta}\nviolations introduced:\n${violLines}`
+  return `${delta}\nviolations introduced:\n${introduced.map((v) => `${v.rule}: ${v.message}`).join('\n')}`
 }
 
 // Finds which commit introduced the CURRENT layout violation(s) on `page` (contract: v1 is
@@ -122,49 +108,88 @@ export async function blame(root: string, page: string, opts: BlameOpts): Promis
   const rootAbs = realpathSync(resolve(root))
   const repoRoot = repoRootOf(rootAbs)
   const relOffset = relative(repoRoot, rootAbs) // '' when root IS the repo root
+  // Uncommitted changes under --root mean the disk state the caller sees is NOT HEAD's
+  // committed state — HEAD joins the walk (so an uncommitted breakage is never pinned on
+  // an innocent commit) and every verdict carries a note.
+  const hasUncommitted = git(rootAbs, ['status', '--porcelain', '--', '.']) !== ''
 
-  // Current bad state: `root` on disk IS HEAD's working tree already — no checkout needed,
-  // and reading it never touches the user's repo.
+  // Current bad state: `root` on disk IS the working tree — no checkout needed, and
+  // reading it never touches the user's repo.
   const current = await checkAt(rootAbs, page, opts.selector, opts.viewport, opts.port)
-  if (current.violations.length === 0) return { output: 'nothing to blame — page is clean', dirty: false }
+  // A resource that 404s from --root 404s identically in EVERY historical comparison —
+  // the verdict below could be confidently wrong, so warn before it.
+  const prefix =
+    (current.misses.length ? `warning: ${current.misses.length} linked resources failed to load from --root (${current.misses.join(', ')}) — if they live outside --root, point --root at the repo root\n` : '') +
+    (hasUncommitted ? 'note: working tree has uncommitted changes\n' : '')
+  if (current.violations.length === 0) return { output: `${prefix}nothing to blame — page is clean`, dirty: false }
   const badKeys = keysOf(current.violations)
 
-  const commits = ancestors(repoRoot, maxCommits)
+  const commits = ancestors(repoRoot, maxCommits, hasUncommitted)
   const scratch = mkdtempSync(join(tmpdir(), 'bettercss-blame-'))
-  armSigintCleanup()
+
+  // SIGINT mid-walk: clean up synchronously (worktree + scratch), then either defer to
+  // another SIGINT listener (the MCP server's graceful shutdown — it kills Chrome and
+  // exits 0) or, in the CLI where no one else will, kill Chrome and exit 130 ourselves
+  // (process.exit skips cli.ts's .finally(shutdownChrome)). Armed per-walk and ALWAYS
+  // disarmed in the finally — a process-lifetime handler would race MCP's shutdown on
+  // every later SIGINT.
+  let interrupted = false
+  let activeWorktree: string | null = null
+  const cleanupCheckouts = () => {
+    if (activeWorktree) removeWorktree(repoRoot, activeWorktree)
+    activeWorktree = null
+    try { rmSync(scratch, { recursive: true, force: true }) } catch {}
+  }
+  const onSigint = () => {
+    interrupted = true
+    cleanupCheckouts()
+    if (process.listeners('SIGINT').length > 1) return
+    void shutdownChrome().finally(() => process.exit(130))
+  }
+  process.on('SIGINT', onSigint)
+
   try {
-    let prevInfo: CommitInfo = { sha: 'HEAD', short: 'HEAD', subject: '', date: '', author: '' }
+    // sentinel: the previous (newer) state examined is the DISK state, not yet any commit
+    let prevInfo: CommitInfo | null = null
     let prevTree = current.tree
     let prevViolations = current.violations
     let examined = 0
 
     for (const commit of commits) {
+      if (interrupted) break
       examined++
       const wtPath = join(scratch, commit.short)
       git(repoRoot, ['worktree', 'add', '--detach', wtPath, commit.sha])
-      const handle = { repoRoot, path: wtPath }
-      activeWorktrees.add(handle)
+      activeWorktree = wtPath
       let result: CheckResult
       try {
         result = await checkAt(join(wtPath, relOffset), page, opts.selector, opts.viewport, opts.port)
       } finally {
-        activeWorktrees.delete(handle)
+        activeWorktree = null
         removeWorktree(repoRoot, wtPath)
       }
 
       const keys = keysOf(result.violations)
       if (!sameState(badKeys, keys)) {
-        // This commit is GOOD — the culprit is the previous (newer) one, already established bad.
-        const culprit = prevInfo.sha === 'HEAD' ? commitInfo(repoRoot, git(repoRoot, ['rev-parse', 'HEAD'])) : prevInfo
-        return { output: foundOutput(culprit, result.tree, prevTree, prevViolations, keys), dirty: true }
+        // This commit is GOOD — whatever was examined just before it (newer) broke the page.
+        const block = deltaBlock(result.tree, prevTree, prevViolations, keys)
+        if (prevInfo === null) {
+          // First walked entry is already good. With uncommitted changes that entry is HEAD
+          // itself, so the breakage was never committed; otherwise the walk started at
+          // HEAD~1 and HEAD (== the disk state) is the culprit.
+          if (hasUncommitted) return { output: `${prefix}broken by uncommitted changes in your working tree (not any commit)\n${block}`, dirty: true }
+          prevInfo = commitInfo(repoRoot, git(repoRoot, ['rev-parse', 'HEAD']))
+        }
+        return { output: `${prefix}broken by ${prevInfo.short} "${prevInfo.subject}" (${prevInfo.date}, ${prevInfo.author})\n${block}`, dirty: true }
       }
       prevInfo = commit
       prevTree = result.tree
       prevViolations = result.violations
     }
-    return { output: `still broken ${examined} commits back — raise --max-commits`, dirty: true }
+    return { output: `${prefix}still broken ${examined} commits back — raise --max-commits`, dirty: true }
   } finally {
-    rmSync(scratch, { recursive: true, force: true })
+    process.removeListener('SIGINT', onSigint)
+    cleanupCheckouts()
     try { execFileSync('git', ['-C', repoRoot, 'worktree', 'prune'], { stdio: 'pipe' }) } catch {}
   }
 }
