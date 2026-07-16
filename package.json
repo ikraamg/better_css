@@ -1,8 +1,31 @@
 {
   "name": "bettercss",
   "version": "0.1.0",
+  "description": "Hard ground truth for CSS — extracts the browser's rendered layout as deterministic, diffable text so coding agents stop guessing. MCP server + CLI.",
+  "keywords": [
+    "css",
+    "layout",
+    "mcp",
+    "model-context-protocol",
+    "chrome-devtools-protocol",
+    "ai-agents",
+    "claude-code",
+    "visual-testing",
+    "layout-testing",
+    "responsive"
+  ],
+  "license": "MIT",
+  "author": "Ikraam Ghoor",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ikraamg/better_css.git"
+  },
+  "homepage": "https://github.com/ikraamg/better_css#readme",
+  "bugs": "https://github.com/ikraamg/better_css/issues",
   "type": "module",
+  "engines": { "node": ">=20" },
   "bin": { "bettercss": "./dist/cli.js" },
+  "files": ["dist", "skills", "README.md", "LICENSE"],
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
