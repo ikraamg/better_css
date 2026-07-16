@@ -40,7 +40,7 @@ Chromium's DevTools Protocol exposes everything DevTools itself knows: one bulk
 `CSS.getMatchedStylesForNode` returns the complete cascade for any element —
 every rule that matched, its specificity, and the stylesheet position it came
 from (source-mapped back through your build). bettercss packages that truth
-into eight composable tools instead of megabytes of protocol JSON.
+into nine composable tools instead of megabytes of protocol JSON.
 
 The core representation is the **LayoutTree**: one line per rendered element,
 deterministic (same render → byte-identical text), with warnings inline:
@@ -66,6 +66,7 @@ screenshot comparison.
 |------|-----------------|
 | `verify` | **"Is this OK?"** — one call: invariants across a viewport sweep (default 375/768/1280) + optional snapshot diffs. First line is always `VERDICT: PASS` or `VERDICT: FAIL (…)`. |
 | `check` | Layout-bug scan: viewport overflow, visible parent bleed, clipped text, unintended overlap, zero-size/tiny tap targets — exact px + the suspect rule at `file:line`. |
+| `fix` | Propose (default) or **apply** mechanical patches for fixable violations (clipped text, tiny tap targets, a fixed px width bleeding/overflowing). DRY-RUN unless `--apply`; writes are confined to `--root` and guarded by a stale-source check. See **Safety** below. |
 | `layout` | The LayoutTree of the rendered page (scope with `selector`/`depth`; auto-budgeted on huge pages). |
 | `inspect` | One element in depth: box model, non-default styles, stacking context, why it has its width/height. |
 | `explain` | Trace any property to its source: which declaration wins (`file:line`, source-mapped), which lost and why, and what layout constraint overrides the declared value (flex-basis, min/max, grid). |
@@ -91,6 +92,24 @@ before forced states.
 real-world pages (intentional overlays, carousels, SVG internals, and
 scroll-managed content are exempt). For a genuinely intentional pattern, put
 `data-bettercss-ignore` on the element.
+
+**Safety (`fix`):** dry-run is the default — nothing is written unless you
+pass `--apply` (CLI) or `apply: true` (MCP), and `--root`/`root` is always
+required so a proposed patch's target file is explicit. Only a handful of
+violations have a safe, mechanical fix (clipped text, a tiny tap target, a
+fixed px width that's bleeding or overflowing); everything else reports "no
+mechanical fix — see suspect" instead of guessing. Writes are confined to
+`--root`: a stylesheet URL is resolved and the result is verified to stay
+inside it, refusing anything that would escape (including through a
+source-mapped `sources[]` path). Before writing, each patch re-reads its
+target file and checks the suspect declaration still appears within 3 lines
+of where it was seen — a mismatch (e.g. someone else edited the file
+concurrently) refuses that one patch with a clear reason; unaffected patches
+in the same run still apply. `--apply` always re-runs `check` afterward and
+reports `before: N violations → after: M violations` plus any **new**
+violations the patch introduced, exiting non-zero unless the fix strictly
+improved things. Inline `<style>`/`style=""` suspects are never patchable —
+refused, naming the `page:line` to hand-edit instead.
 
 ## Install
 

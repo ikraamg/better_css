@@ -15,6 +15,7 @@ import { forcePseudoStates, type PseudoStates } from './core/state.js'
 import { assertNoInteractNavigation, hasInteractSteps, interactWasUnsettled, runInteractSteps, type InteractSteps } from './core/interact.js'
 import { animateNote, needsAnimationCapture, settleAnimations, type AnimateOpts } from './core/animate.js'
 import { measureStability, renderStability } from './core/stability.js'
+import { applyFixes, buildFixes, renderFixes } from './core/fix.js'
 
 const server = new McpServer({ name: 'bettercss', version: '0.1.0' })
 
@@ -121,6 +122,50 @@ server.tool('check', 'Run layout invariants (overflow, bleed, clipped text, unin
       const violations = checkInvariants(buildTree(await extract(client)))
       return renderViolations(client, violations)
     }))
+
+server.tool('fix', 'Propose (default) or APPLY mechanical patches for fixable violations (text-clip, tap-target, viewport-overflow/parent-bleed with a fixed px width) — everything else reports "no mechanical fix for <rule> — see suspect". DRY-RUN unless apply=true: prints one unified-diff-style hunk per fixable violation (file:line, -/+ lines) and writes nothing. apply=true EDITS FILES ON DISK, confined to root (path traversal from a suspect stylesheet URL is rejected — resolved and verified to stay inside root); each patch is guarded by a stale-source check (refuses a patch whose expected declaration text has drifted from where it was last seen, tolerating small line shifts — other patches in the same call still apply). After applying, automatically re-runs check and reports "before: N violations -> after: M violations" plus any NEW violations the patch introduced (regression honesty) — isError is set unless the fix strictly improved things (M < N and no new violations). selector limits which violations are attempted (substring match against the rendered selector). Inline <style>/style= suspects are never patchable — refused, with the page:line to hand-edit instead. Pass scrollTo/click/settled/atTime/hover/focus/active exactly as for check. viewports (matrix) is NOT supported — apply writes once per call; pass viewport (singular) or call fix again per viewport.',
+  {
+    url, port, viewport,
+    root: z.string().describe('Local directory that stylesheet URLs are resolved against, and — with apply=true — written into. Writes outside this directory are refused.'),
+    apply: z.boolean().optional().describe('Write the proposed patches to disk. Default false: dry-run, prints patches only, writes nothing.'),
+    selector: z.string().optional().describe('Only attempt to fix violations whose rendered selector contains this'),
+    hover, focus, active, click, scrollTo, settled, atTime,
+    viewports: rejectedStr('apply writes files once per call; pass viewport (singular) or call fix again per viewport.'),
+  },
+  ({ url: u, port: p, viewport: v, root, apply, selector, hover: h, focus: fo, active: a, click: cl, scrollTo: st, settled: se, atTime: at, viewports: vs }) => {
+    if (vs !== undefined) throw new Error(`viewports is not valid for fix — apply writes files once per call; pass viewport (singular) or call fix again per viewport.`)
+    const states: PseudoStates = { hover: h, focus: fo, active: a }
+    const interact: InteractSteps = { click: cl, scrollTo: st }
+    const animate: AnimateOpts = { settled: se, atTime: at }
+    const pageOpts = { port: p, viewport: v ? parseViewport(v) : undefined, captureAnimations: needsAnimationCapture(animate) }
+    const capture = async (client: any) => {
+      await runInteractSteps(client, interact, { skipSettleWait: needsAnimationCapture(animate) })
+      await settleAnimations(client, animate)
+      await forcePseudoStates(client, states)
+      return checkInvariants(buildTree(await extract(client)))
+    }
+    return (async () => {
+      const { violations: beforeViolations, outcomes } = await withPage(u, async (client) => {
+        const violations = await capture(client)
+        const toFix = selector ? violations.filter((vi) => vi.selector.includes(selector)) : violations
+        const fixOutcomes = await buildFixes(client, u, toFix, root)
+        return { violations, outcomes: fixOutcomes }
+      }, pageOpts)
+
+      let out = renderFixes(outcomes)
+      if (!apply) return text(out)
+      if (!outcomes.some((o) => o.kind === 'patch')) return text(`${out}\n\nno patches applied`)
+
+      applyFixes(outcomes)
+      const afterViolations = await withPage(u, capture, pageOpts)
+      const beforeKeys = new Set(beforeViolations.map((vi) => `${vi.rule} ${vi.selector}`))
+      const newViolations = afterViolations.filter((vi) => !beforeKeys.has(`${vi.rule} ${vi.selector}`))
+      out += `\n\nbefore: ${beforeViolations.length} violations → after: ${afterViolations.length} violations`
+      if (newViolations.length) out += `\nNEW violations introduced:\n${newViolations.map((vi) => `  ${vi.rule}: ${vi.message}`).join('\n')}`
+      const ok = afterViolations.length < beforeViolations.length && newViolations.length === 0
+      return { content: [{ type: 'text' as const, text: out }], isError: !ok }
+    })()
+  })
 
 server.tool('snapshot', 'Lock the current layout as a named .tree snapshot for later diffing. Do this when the page looks CORRECT. Pass settled (recommended for animated pages, for a deterministic snapshot). atTime is NOT supported here — a specific animation frame pinned by hand is not a reproducible baseline; use layout/check with atTime to inspect mid-animation states instead.',
   {

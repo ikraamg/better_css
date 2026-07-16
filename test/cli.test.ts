@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from 'vitest'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { cpSync, existsSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { serveFixtures } from './helpers/server.js'
@@ -394,4 +394,39 @@ test.each([
   const err = await cli('stability', `${srv.url}/shifty/index.html`, flag, ...value).catch((e) => e)
   expect(err.code).toBe(2)
   expect(err.stderr).toContain(`${flag} is not valid for stability`)
+}, 60_000)
+
+// (d) missing --root on apply (and on a plain dry-run — root is needed just to resolve
+// where a patch would land, so it's required for fix regardless of --apply) exits 2
+test('fix without --root exits 2, with or without --apply', async () => {
+  const dryErr = await cli('fix', `${srv.url}/fixable/index.html`).catch((e) => e)
+  expect(dryErr.code).toBe(2)
+  expect(dryErr.stderr).toContain('fix requires --root')
+
+  const applyErr = await cli('fix', `${srv.url}/fixable/index.html`, '--apply').catch((e) => e)
+  expect(applyErr.code).toBe(2)
+  expect(applyErr.stderr).toContain('fix requires --root')
+}, 60_000)
+
+test('fix dry-run (CLI) prints patches and never writes; deferring exact patch content to fix.test.ts', async () => {
+  const cssPath = 'fixtures/fixable/styles.css'
+  const before = readFileSync(cssPath, 'utf8')
+  const { stdout } = await cli('fix', `${srv.url}/fixable/index.html`, '--root', 'fixtures')
+  expect(stdout).toContain('text-clip')
+  expect(stdout).toContain('tap-target')
+  expect(stdout).toContain('parent-bleed')
+  expect(readFileSync(cssPath, 'utf8')).toBe(before)
+}, 60_000)
+
+test('fix --apply on a temp copy writes patches, reports before/after honestly, and exits 0 on a clean improvement', async () => {
+  const workDir = mkdtempSync(join(tmpdir(), 'bettercss-cli-fix-'))
+  cpSync('fixtures/fixable', join(workDir, 'fixable'), { recursive: true })
+  const tmpSrv = await serveFixtures(workDir)
+  try {
+    const { stdout } = await cli('fix', `${tmpSrv.url}/fixable/index.html`, '--root', workDir, '--apply')
+    expect(stdout).toMatch(/before: 3 violations → after: 0 violations/)
+    expect(stdout).not.toContain('NEW violations introduced')
+  } finally {
+    tmpSrv.close()
+  }
 }, 60_000)

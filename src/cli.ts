@@ -12,6 +12,7 @@ import { forcePseudoStates, type PseudoStates } from './core/state.js'
 import { assertNoInteractNavigation, hasInteractSteps, interactWasUnsettled, runInteractSteps, type InteractSteps } from './core/interact.js'
 import { animateNote, needsAnimationCapture, settleAnimations, type AnimateOpts } from './core/animate.js'
 import { measureStability, renderStability } from './core/stability.js'
+import { applyFixes, buildFixes, renderFixes } from './core/fix.js'
 
 const USAGE = `bettercss <command> <url> [options]
   layout    <url> [--selector S] [--depth N]   print the LayoutTree (budgeted to 400 lines unless --depth is given)
@@ -20,6 +21,28 @@ const USAGE = `bettercss <command> <url> [options]
   check     <url>                              run invariants (exit 1 on violations)
   snapshot  <url> --name NAME [--dir DIR]      lock current LayoutTree to a .tree file
   diff      <url> --name NAME [--dir DIR]      diff current layout vs snapshot
+  fix       <url> --root DIR [--apply] [--selector S]
+                                                propose (default) or apply mechanical patches for
+                                                fixable violations (text-clip, tap-target,
+                                                viewport-overflow/parent-bleed with a fixed px
+                                                width). DRY-RUN by default: prints one unified-diff-
+                                                style hunk per fixable violation (file:line, -/+
+                                                lines) and writes nothing. --apply writes the
+                                                patches, confined to --root (path traversal from a
+                                                suspect's stylesheet URL is rejected), guarded by a
+                                                stale-source check (refuses a patch whose expected
+                                                declaration text has drifted more than 3 lines from
+                                                where it was seen — other patches in the same run
+                                                still apply), then re-runs check and prints
+                                                "before: N violations -> after: M violations" plus
+                                                any NEW violations the patch introduced. Exit 0 only
+                                                if M < N and no new violations. --selector limits
+                                                which violations are attempted. Inline <style>/style=
+                                                suspects are never patchable (refused, with the
+                                                page:line to hand-edit). Accepts --viewport/--hover/
+                                                --focus/--active/--click/--scroll-to/--settled/
+                                                --at-time like check; not --viewports (apply writes
+                                                once — re-run per viewport instead)
   verify    <url> [--name NAME --dir DIR]      composite: check invariants + (if --name given)
                                                 diff a snapshot, one run. First output line is
                                                 VERDICT: PASS/FAIL; exit 1 on any violation or
@@ -77,12 +100,13 @@ interface Flags {
   viewport?: string; viewports?: string
   dir?: string
   settled?: string; 'at-time'?: string
+  root?: string; apply?: string
 }
 
 // Repeated occurrences of these flags accumulate into an array instead of last-wins.
 const REPEATABLE = new Set(['click'])
 // Presence-only flags: no value follows, so the parser must not consume the next argv slot.
-const BOOLEAN = new Set(['settled'])
+const BOOLEAN = new Set(['settled', 'apply'])
 
 function flags(argv: string[]): Flags {
   // required fields (selector/property/name) are only actually read on commands whose
@@ -110,13 +134,14 @@ const REQUIRED: Record<string, string[]> = {
   explain: ['selector', 'property'],
   snapshot: ['name'],
   diff: ['name'],
+  fix: ['root'],
 }
 
 async function main(): Promise<number> {
   const [cmd, url] = process.argv.slice(2)
   const f = flags(process.argv.slice(4))
   if (!cmd || !url) { console.error(USAGE); return 2 }
-  if (!['layout', 'inspect', 'explain', 'check', 'snapshot', 'diff', 'verify', 'stability'].includes(cmd)) {
+  if (!['layout', 'inspect', 'explain', 'check', 'snapshot', 'diff', 'verify', 'stability', 'fix'].includes(cmd)) {
     console.error(USAGE)
     return 2
   }
@@ -127,13 +152,17 @@ async function main(): Promise<number> {
     }
   }
   const stateFlags = (['hover', 'focus', 'active'] as const).filter((k) => f[k] !== undefined)
-  if (stateFlags.length && !['layout', 'inspect', 'explain', 'check', 'verify'].includes(cmd)) {
-    console.error(`--${stateFlags[0]} is only valid for layout/inspect/explain/check/verify, not ${cmd} — forced-state snapshots invite stale-state confusion.`)
+  if (stateFlags.length && !['layout', 'inspect', 'explain', 'check', 'verify', 'fix'].includes(cmd)) {
+    console.error(`--${stateFlags[0]} is only valid for layout/inspect/explain/check/verify/fix, not ${cmd} — forced-state snapshots invite stale-state confusion.`)
     return 2
   }
   const interact: InteractSteps = { click: f.click, scrollTo: f['scroll-to'] }
-  if (hasInteractSteps(interact) && !['layout', 'inspect', 'explain', 'check', 'verify'].includes(cmd)) {
-    console.error(`--click/--scroll-to are only valid for layout/inspect/explain/check/verify, not ${cmd} — interacted-state snapshots invite stale-state confusion.`)
+  if (hasInteractSteps(interact) && !['layout', 'inspect', 'explain', 'check', 'verify', 'fix'].includes(cmd)) {
+    console.error(`--click/--scroll-to are only valid for layout/inspect/explain/check/verify/fix, not ${cmd} — interacted-state snapshots invite stale-state confusion.`)
+    return 2
+  }
+  if (cmd === 'fix' && f.viewports !== undefined) {
+    console.error(`--viewports is not valid for fix — apply writes files once per run; pass --viewport (singular) or re-run per viewport.`)
     return 2
   }
   // USAGE promises stability takes none of these; silently no-oping them would lie
@@ -178,6 +207,45 @@ async function main(): Promise<number> {
     return 2
   }
   const opts = { port: f.port ? Number(f.port) : undefined, viewport, captureAnimations: needsAnimationCapture(animate) }
+
+  if (cmd === 'fix') {
+    const root = f.root!
+    const apply = f.apply !== undefined
+    const states: PseudoStates = { hover: f.hover, focus: f.focus, active: f.active }
+    const capture = async (client: any) => {
+      await runInteractSteps(client, interact, { skipSettleWait: needsAnimationCapture(animate) })
+      await settleAnimations(client, animate)
+      await forcePseudoStates(client, states)
+      return checkInvariants(buildTree(await extract(client)))
+    }
+
+    const { violations: beforeViolations, outcomes } = await withPage(url, async (client) => {
+      const violations = await capture(client)
+      const toFix = f.selector ? violations.filter((v) => v.selector.includes(f.selector as string)) : violations
+      const outcomes = await buildFixes(client, url, toFix, root)
+      return { violations, outcomes }
+    }, opts)
+
+    console.log(renderFixes(outcomes))
+    if (!apply) return 0
+
+    if (!outcomes.some((o) => o.kind === 'patch')) {
+      console.log('\nno patches applied')
+      return 0
+    }
+    applyFixes(outcomes)
+
+    const afterViolations = await withPage(url, capture, opts)
+    const beforeKeys = new Set(beforeViolations.map((v) => `${v.rule} ${v.selector}`))
+    const newViolations = afterViolations.filter((v) => !beforeKeys.has(`${v.rule} ${v.selector}`))
+    console.log(`\nbefore: ${beforeViolations.length} violations → after: ${afterViolations.length} violations`)
+    if (newViolations.length) {
+      console.log('NEW violations introduced:')
+      for (const v of newViolations) console.log(`  ${v.rule}: ${v.message}`)
+    }
+    if (!(afterViolations.length < beforeViolations.length && newViolations.length === 0)) process.exitCode = 1
+    return Number(process.exitCode ?? 0)
+  }
 
   if (cmd === 'stability') {
     const result = await measureStability(url, {

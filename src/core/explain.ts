@@ -10,6 +10,11 @@ export interface CascadeEntry {
   status: 'winner' | 'overridden'
   reason: string | null
   via?: string // set when the value comes from a shorthand, e.g. 'margin: 4px 8px'
+  // the GENERATED stylesheet's own URL (or '<style>'/'(inline)'), preserved even when `file`
+  // above has been overwritten by source-map resolution to an original-source path — callers
+  // that need to resolve `file` back to a real location (e.g. src/core/fix.ts writing a patch)
+  // must join it against this, not assume `file` is itself a URL.
+  sheetURL: string
 }
 
 export interface Explanation {
@@ -173,6 +178,7 @@ function rawsForProperty(matchedCSSRules: any[], sheets: Map<string, SheetInfo>,
       status: 'overridden',
       reason: null,
       via,
+      sheetURL: info?.sourceURL ?? '(unknown)',
       order,
       rank: specRank(matched),
       col: range?.startColumn ?? 0,
@@ -272,7 +278,8 @@ export async function explain(
     raws.push({
       value: decl.value, selector: '(inline style)', specificity: '(inline)',
       important: Boolean(decl.important), file: '(inline)', line: 0,
-      status: 'overridden', reason: null, order: Number.MAX_SAFE_INTEGER, rank: Number.MAX_SAFE_INTEGER,
+      status: 'overridden', reason: null, sheetURL: '(inline)',
+      order: Number.MAX_SAFE_INTEGER, rank: Number.MAX_SAFE_INTEGER,
       col: 0,
     })
   }

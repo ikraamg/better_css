@@ -1,0 +1,5 @@
+.clipper {
+  width: 120px;
+  overflow: hidden;
+  white-space: nowrap;
+}

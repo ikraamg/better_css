@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from 'vitest'
 import { execSync } from 'node:child_process'
 import { createServer } from 'node:http'
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
@@ -35,10 +35,10 @@ const client = new Client({ name: 'test', version: '0' })
 await client.connect(new StdioClientTransport({ command: process.execPath, args: ['--import', 'tsx', 'src/mcp.ts'] }))
 afterAll(async () => { await client.close(); srv.close() })
 
-test('lists all eight tools', async () => {
+test('lists all nine tools', async () => {
   const { tools } = await client.listTools()
   expect(tools.map((t) => t.name).sort())
-    .toEqual(['check', 'diff', 'explain', 'inspect', 'layout', 'snapshot', 'stability', 'verify'])
+    .toEqual(['check', 'diff', 'explain', 'fix', 'inspect', 'layout', 'snapshot', 'stability', 'verify'])
 })
 
 test('layout tool returns the tree', async () => {
@@ -235,6 +235,26 @@ test('stability tool reports zero score on the fluid fixture (no shifts)', async
   })
   expect((res.content as any)[0].text).toBe('STABILITY: 0 (threshold 0.1)')
 }, 20_000)
+
+// (f) MCP fix with apply=false returns patches, never writes
+test('fix tool with apply=false (the default) returns patches and never writes', async () => {
+  const cssPath = 'fixtures/fixable/styles.css'
+  const before = readFileSync(cssPath, 'utf8')
+  const res = await client.callTool({
+    name: 'fix',
+    arguments: { url: `${srv.url}/fixable/index.html`, root: 'fixtures' },
+  })
+  const text = (res.content as any)[0].text
+  expect(text).toContain('text-clip')
+  expect(text).toContain('tap-target')
+  expect(text).toContain('parent-bleed')
+  expect(readFileSync(cssPath, 'utf8')).toBe(before)
+}, 60_000)
+
+test('fix tool without root is rejected by the schema (root is required)', async () => {
+  const res = await client.callTool({ name: 'fix', arguments: { url: `${srv.url}/fixable/index.html` } })
+  expect(res.isError).toBe(true)
+})
 
 test('shuts down its headless Chrome subprocess when the MCP session closes', async () => {
   await client.close()
