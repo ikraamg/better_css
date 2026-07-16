@@ -136,7 +136,11 @@ test('verify tool with name diffs the resting layout and notes a missing per-vie
 test('shuts down its headless Chrome subprocess when the MCP session closes', async () => {
   await client.close()
   // client.close() ends stdin, waits up to 2s for a natural exit, then SIGTERMs the
-  // server if it's still alive — give shutdownChrome's proc.kill() + rmSync a moment to land.
-  await new Promise((r) => setTimeout(r, 500))
+  // server if it's still alive. Process teardown is asynchronous (and slower on Linux
+  // CI than macOS), so poll for the invariant — eventually no Chrome — with a deadline.
+  const deadline = Date.now() + 15_000
+  while (chromeLeaked() && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 250))
+  }
   expect(chromeLeaked()).toBe(false)
 }, 60_000)
