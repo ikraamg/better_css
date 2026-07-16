@@ -70,8 +70,15 @@ function page(
   opts: { port?: number; viewport?: string; states?: PseudoStates; interact?: InteractSteps; animate?: AnimateOpts },
   fn: (client: any) => Promise<string>,
 ) {
+  // Cheap pre-Chrome rejection, mirroring the CLI's upfront check (cli.ts validates
+  // before withPage too) — settleAnimations already throws this at its shared choke
+  // point as a backstop, but only after a full page load, wasting it on a request that
+  // was always going to fail.
+  if (opts.animate?.settled && opts.animate?.atTime !== undefined) {
+    throw new Error('settled and atTime are mutually exclusive — pick one.')
+  }
   return withPage(u, async (client) => {
-    await runInteractSteps(client, opts.interact ?? {})
+    await runInteractSteps(client, opts.interact ?? {}, { skipSettleWait: needsAnimationCapture(opts.animate ?? {}) })
     await settleAnimations(client, opts.animate ?? {})
     if (opts.states) await forcePseudoStates(client, opts.states)
     let out = await fn(client)

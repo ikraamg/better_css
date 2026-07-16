@@ -9,6 +9,8 @@ body { height: 2000px; }
 @keyframes leaving { from { transform: translateX(0); } to { transform: translateX(100px); } }
 #anim-box { width: 50px; height: 50px; background: #ccf; transition: transform 1s linear; }
 #anim-box.moved { transform: translateX(200px); }
+#slow-anim-box { width: 50px; height: 50px; background: #fcc; transition: transform 5s linear; }
+#slow-anim-box.moved { transform: translateX(200px); }
 #hash-link { display: block; width: 80px; height: 32px; }
 #away-link { display: block; width: 80px; height: 32px; }
 #section { margin-top: 900px; }
@@ -28,6 +30,7 @@ body { height: 2000px; }
 </div>
 <button id="late-nav">Leave</button>
 <div id="anim-box"></div>
+<div id="slow-anim-box"></div>
 <a id="hash-link" href="#section">Section</a>
 <a id="away-link" href="/interactive/other.html">Away</a>
 <button id="silent-late-nav">Leave quietly</button>
@@ -54,6 +57,12 @@ document.getElementById('silent-late-nav').addEventListener('click', function ()
   setTimeout(function () { location.href = 'other.html' }, 500)
 })
 document.getElementById('anim-box').addEventListener('click', function () {
+  this.classList.add('moved')
+})
+document.getElementById('slow-anim-box').addEventListener('click', function () {
+  // Deliberately longer than interact.ts's SETTLE_CAP_MS (2000ms) — under --settled this
+  // transition gets seeked to its end directly, so the interact phase must not burn its
+  // own cap waiting it out first.
   this.classList.add('moved')
 })
 document.getElementById('fold-btn').addEventListener('click', function () {

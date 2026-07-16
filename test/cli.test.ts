@@ -304,6 +304,15 @@ test('layout --settled notes the infinite spinner was pinned to its start', asyn
   expect(stdout).toContain('note: 1 infinite animation pinned to its start (t=0) for determinism')
 }, 60_000)
 
+test('a click that starts a transition longer than the settle cap, under --settled, seeks straight to the end with no misleading "not settled" note', async () => {
+  const { stdout } = await cli('layout', `${srv.url}/interactive/index.html`, '--click', '#slow-anim-box', '--settled')
+  // The seeked end position (translateX(200px) applied to its natural (0,146) box) —
+  // asserted exactly, not just presence, so a broken seek (animation never registered,
+  // stuck at its pre-click (0,146) start) can't slip past as a false pass.
+  expect(stdout).toContain('div#slow-anim-box.moved (200,146 50x50)')
+  expect(stdout).not.toContain('note: page had not settled after interactions')
+}, 60_000)
+
 test('snapshot --settled then diff --settled round-trips clean on the animated fixture', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'bettercss-settled-test-'))
   await cli('snapshot', `${srv.url}/animated/index.html`, '--name', 'anim', '--dir', dir, '--settled')

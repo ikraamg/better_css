@@ -37,7 +37,7 @@ export async function checkMatrix(
   opts: { port?: number; states?: PseudoStates; interact?: InteractSteps; animate?: AnimateOpts },
 ): Promise<{ output: string; dirty: boolean }> {
   const results = await forEachViewport(url, viewports, async (client) => {
-    await runInteractSteps(client, opts.interact ?? {})
+    await runInteractSteps(client, opts.interact ?? {}, { skipSettleWait: needsAnimationCapture(opts.animate ?? {}) })
     await settleAnimations(client, opts.animate ?? {})
     if (opts.states) await forcePseudoStates(client, opts.states)
     const violations = checkInvariants(buildTree(await extract(client)))

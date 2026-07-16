@@ -56,7 +56,7 @@ export async function verifyMatrix(
 ): Promise<{ output: string; dirty: boolean }> {
   const modified = Boolean(opts.states) || hasInteractSteps(opts.interact)
   const checked = await forEachViewport(url, viewports, async (client, vp) => {
-    await runInteractSteps(client, opts.interact ?? {})
+    await runInteractSteps(client, opts.interact ?? {}, { skipSettleWait: needsAnimationCapture(opts.animate ?? {}) })
     await settleAnimations(client, opts.animate ?? {})
     if (opts.states) await forcePseudoStates(client, opts.states)
     const tree = buildTree(await extract(client))

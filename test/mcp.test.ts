@@ -1,5 +1,6 @@
 import { afterAll, expect, test } from 'vitest'
 import { execSync } from 'node:child_process'
+import { createServer } from 'node:http'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -10,10 +11,15 @@ import { serveFixtures } from './helpers/server.js'
 function leakedProcesses(): string {
   // Empty once shutdownChrome has killed the headless Chrome tree. On failure
   // the PID/PPID/args triple names the culprit AND its parent (ppid 1 = orphan).
-  // The [b] character class keeps the pattern from matching this command's own
-  // resident shell.
+  //
+  // Matches the actual leaked-Chrome signature — `--user-data-dir=<tmpdir>/bettercss-*`
+  // (connect.ts's launchChrome) — not a bare "bettercss-" substring: an operator's own
+  // resident shell can easily have that substring in its command line too (a `cd
+  // .../better_css` prompt, another agent session's command mentioning a `bettercss-`
+  // test dir prefix, ...), which a bare pattern would misreport as a leak. The [b]
+  // character class still keeps the pattern from matching this grep's own argv.
   try {
-    return execSync('ps -eo pid,ppid,args | grep "[b]ettercss-" | grep -v grep', { stdio: 'pipe' })
+    return execSync('ps -eo pid,ppid,args | grep "user-data-dir=.*[b]ettercss-" | grep -v grep', { stdio: 'pipe' })
       .toString().trim()
   } catch { return '' }
 }
@@ -154,6 +160,21 @@ test('layout tool rejects settled+atTime together with a clear error', async () 
   const res = await client.callTool({ name: 'layout', arguments: { url: `${srv.url}/animated/index.html`, settled: true, atTime: 0 } })
   expect(res.isError).toBe(true)
   expect((res.content as any)[0].text).toContain('mutually exclusive')
+})
+
+test('layout tool rejects settled+atTime before ever loading the page (cheap pre-check, no wasted page load)', async () => {
+  let hit = false
+  const decoy = createServer((_req, res) => { hit = true; res.end('<html></html>') })
+  await new Promise<void>((resolve) => decoy.listen(0, '127.0.0.1', resolve))
+  const { port } = decoy.address() as { port: number }
+  try {
+    const res = await client.callTool({ name: 'layout', arguments: { url: `http://127.0.0.1:${port}/`, settled: true, atTime: 0 } })
+    expect(res.isError).toBe(true)
+    expect((res.content as any)[0].text).toContain('mutually exclusive')
+    expect(hit).toBe(false)
+  } finally {
+    decoy.close()
+  }
 })
 
 test('snapshot/diff tools with settled round-trip a clean diff on the animated fixture', async () => {

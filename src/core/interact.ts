@@ -123,7 +123,17 @@ export async function waitForSettle(client: any, capMs = SETTLE_CAP_MS): Promise
 // (cli.ts, mcp.ts, matrix.ts, verify.ts) run this after navigation and before any
 // pseudo-state forcing (state.ts) or capture. A no-op when no steps are given, same
 // shape as forcePseudoStates's empty-states no-op.
-export async function runInteractSteps(client: any, steps: InteractSteps): Promise<void> {
+export async function runInteractSteps(
+  client: any, steps: InteractSteps,
+  opts: {
+    // Set when the caller is about to run animate.ts's settleAnimations with
+    // settled/atTime — its own seek (+ short post-seek settle) supersedes this wait
+    // entirely, so a click that starts a transition longer than SETTLE_CAP_MS must not
+    // burn the full cap polling an animation that's about to be frozen/seeked anyway,
+    // nor mark `unsettled` for a note animate.ts's own (accurate) one already covers.
+    skipSettleWait?: boolean
+  } = {},
+): Promise<void> {
   if (!hasInteractSteps(steps)) return
 
   // Armed for the ENTIRE interact phase and left armed after this function returns (see
@@ -153,6 +163,26 @@ export async function runInteractSteps(client: any, steps: InteractSteps): Promi
   for (const selector of steps.click ?? []) {
     await clickTarget(client, selector)
     await navCheck()
+  }
+
+  if (opts.skipSettleWait) {
+    // Still give the browser ONE settle pass (~2 requestAnimationFrame ticks) — a
+    // just-started transition/animation needs that tick to actually be registered
+    // (Animation.animationStarted, cached by connect.ts) before settleAnimations tries
+    // to seek it; skipping the wait outright races the seek against an animation Chrome
+    // hasn't created yet (verified empirically: cachedAnimations is still empty and the
+    // seek becomes a silent no-op). Not looping further up to the full cap — the
+    // upcoming seek supersedes waiting out a real transition — and `unsettled` is
+    // deliberately left unset here: animate.ts's own post-seek settle note is the
+    // authoritative one once it seeks.
+    try {
+      await waitForSettle(client, 1)
+    } catch (err) {
+      await navCheck()
+      throw err
+    }
+    await navCheck()
+    return
   }
 
   let settled: boolean

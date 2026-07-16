@@ -223,7 +223,7 @@ async function main(): Promise<number> {
 
   const states: PseudoStates = { hover: f.hover, focus: f.focus, active: f.active }
   const output = await withPage(url, async (client) => {
-    await runInteractSteps(client, interact)
+    await runInteractSteps(client, interact, { skipSettleWait: needsAnimationCapture(animate) })
     await settleAnimations(client, animate)
     await forcePseudoStates(client, states)
     let result: string
