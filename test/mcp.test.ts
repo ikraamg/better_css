@@ -11,7 +11,9 @@ function leakedProcesses(): string {
   // pgrep exits 1 (no match) once shutdownChrome has killed the headless Chrome
   // and removed its bettercss-* temp profile dir; exits 0 while it's still alive.
   // Returns the offending process list so a failure names the culprit.
-  try { return execSync('pgrep -af "bettercss-" || pgrep -fl "bettercss-"', { stdio: 'pipe' }).toString().trim() }
+  // bettercss[-] keeps the pattern from matching the shell running this very
+  // command (a compound sh -c stays resident with the pattern in its cmdline).
+  try { return execSync('pgrep -fl "bettercss[-]"', { stdio: 'pipe' }).toString().trim() }
   catch { return '' }
 }
 function chromeLeaked(): boolean {
