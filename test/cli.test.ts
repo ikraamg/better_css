@@ -299,9 +299,9 @@ test('layout --at-time 0 shows the element at its starting 200px width', async (
   expect(stdout).toContain('div#target.child.grow (0,0 200x50)')
 }, 60_000)
 
-test('layout --settled notes the infinite spinner was frozen mid-flight', async () => {
+test('layout --settled notes the infinite spinner was pinned to its start', async () => {
   const { stdout } = await cli('layout', `${srv.url}/animated/index.html`, '--settled')
-  expect(stdout).toContain('note: 1 infinite animation frozen mid-flight')
+  expect(stdout).toContain('note: 1 infinite animation pinned to its start (t=0) for determinism')
 }, 60_000)
 
 test('snapshot --settled then diff --settled round-trips clean on the animated fixture', async () => {
@@ -324,4 +324,20 @@ test('--at-time is rejected for snapshot and diff (a specific animation frame is
 
 test('without --settled/--at-time, the animated fixture reads mid-flight and is unaffected (flag-less behavior is unchanged)', async () => {
   await expect(cli('layout', `${srv.url}/animated/index.html`)).resolves.toBeTruthy()
+}, 60_000)
+
+// A flag-less run on an ANIMATED page is inherently time-dependent, so the honest no-drift
+// proof uses a page with no animations: there --settled arms the Animation domain but has
+// nothing to seek, so its output must be byte-identical to a flag-less run.
+test('--settled on a non-animated page is byte-identical to a flag-less run (plumbing adds no drift)', async () => {
+  const { stdout: flagless } = await cli('layout', `${srv.url}/basic/index.html`)
+  const { stdout: settled } = await cli('layout', `${srv.url}/basic/index.html`, '--settled')
+  expect(settled).toBe(flagless)
+}, 60_000)
+
+test('verify --settled passes the flag through, failing with the exact 100px bleed', async () => {
+  const err = await cli('verify', `${srv.url}/animated/index.html`, '--viewports', '1280x800', '--settled').catch((e) => e)
+  expect(err.code).toBe(1)
+  expect(err.stdout.split('\n')[0]).toMatch(/^VERDICT: FAIL/)
+  expect(err.stdout).toContain('bleeds 100px outside div.parent')
 }, 60_000)

@@ -150,6 +150,12 @@ test('layout tool with settled fast-forwards the transition to its end width', a
   expect((res.content as any)[0].text).toContain('div#target.child.grow (0,0 400x50)')
 })
 
+test('layout tool rejects settled+atTime together with a clear error', async () => {
+  const res = await client.callTool({ name: 'layout', arguments: { url: `${srv.url}/animated/index.html`, settled: true, atTime: 0 } })
+  expect(res.isError).toBe(true)
+  expect((res.content as any)[0].text).toContain('mutually exclusive')
+})
+
 test('snapshot/diff tools with settled round-trip a clean diff on the animated fixture', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'bettercss-mcp-settled-test-'))
   await client.callTool({ name: 'snapshot', arguments: { url: `${srv.url}/animated/index.html`, name: 'anim', dir, settled: true } })

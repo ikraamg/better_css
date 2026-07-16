@@ -43,11 +43,12 @@ const USAGE = `bettercss <command> <url> [options]
              only, not snapshot/diff. Order: navigate, scroll-to, clicks (in argument order),
              settle, then --hover/--focus/--active, then capture
            --settled (fast-forward every CSS transition/animation to its end state before
-             capturing — layout/inspect/explain/check/verify/snapshot/diff/verify; a perpetual
-             animation can't end, so it's paused instead and noted), --at-time N (seek every
-             animation to N ms, clamped to its own duration, instead of its end — same
-             commands EXCEPT snapshot/diff, where a specific animation frame isn't a
-             deterministic snapshot). Runs after interact steps and before --hover/--focus/--active`
+             capturing — layout/inspect/explain/check/verify/snapshot/diff; a perpetual
+             animation can't end, so it's pinned to its start (t=0) and noted), --at-time N
+             (seek every animation to N ms, clamped to its own full duration, instead of its
+             end — same commands EXCEPT snapshot/diff, where a specific animation frame isn't
+             a deterministic snapshot). Mutually exclusive with each other. Runs after
+             interact steps and before --hover/--focus/--active`
 
 interface Flags {
   [key: string]: string | string[] | undefined

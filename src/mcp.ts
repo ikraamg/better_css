@@ -35,8 +35,8 @@ const scrollTo = z.string().optional().describe('Scroll to this selector (scroll
 // --settled/--at-time — layout/inspect/explain/check/verify get both; snapshot/diff get
 // settled ONLY (a specific animation frame isn't a deterministic snapshot). Runs after
 // interact steps and before hover/focus/active.
-const settled = z.boolean().optional().describe('Fast-forward every CSS transition/animation to its end state before reading the page. A perpetual animation (e.g. a spinner) can\'t end, so it\'s paused instead and noted. Recommended when the page has animations, for a deterministic read.')
-const atTime = z.number().optional().describe('Seek every animation to this many ms (instead of its end), clamped to each animation\'s own duration. Mutually exclusive with settled.')
+const settled = z.boolean().optional().describe('Fast-forward every CSS transition/animation to its end state before reading the page. A perpetual animation (e.g. a spinner) can\'t end, so it\'s pinned to its start (t=0) for determinism, with a note. Recommended when the page has animations, for a deterministic read. Mutually exclusive with atTime.')
+const atTime = z.number().optional().describe('Seek every animation to this many ms (instead of its end), clamped to each animation\'s own full duration (delay + duration x iterations). Mutually exclusive with settled.')
 
 function page(
   u: string,
@@ -85,7 +85,7 @@ server.tool('check', 'Run layout invariants (overflow, bleed, clipped text, unin
       return renderViolations(client, violations)
     }))
 
-server.tool('snapshot', 'Lock the current layout as a named .tree snapshot for later diffing. Do this when the page looks CORRECT. Pass settled (recommended for animated pages, for a deterministic snapshot) — not atTime, which pins one animation frame instead of a stable end state.',
+server.tool('snapshot', 'Lock the current layout as a named .tree snapshot for later diffing. Do this when the page looks CORRECT. Pass settled (recommended for animated pages, for a deterministic snapshot). atTime is NOT supported here — a specific animation frame pinned by hand is not a reproducible baseline; use layout/check with atTime to inspect mid-animation states instead.',
   { url, port, viewport, viewports, name: z.string(), dir: z.string().optional().describe("Snapshot dir (default .bettercss relative to the MCP server's working directory — pass an absolute path when the server isn't launched from your project root)"), settled },
   ({ url: u, port: p, viewport: v, viewports: vs, name, dir, settled: se }) => vs
     ? snapshotMatrix(u, parseViewportList(vs), name, dir, { port: p, settled: se }).then((s) => text(s))
@@ -95,7 +95,7 @@ server.tool('snapshot', 'Lock the current layout as a named .tree snapshot for l
       return `saved ${saveSnapshot(renderTree(tree), name, dir)}`
     }))
 
-server.tool('diff', 'Structural diff of the current layout vs a named snapshot: what moved/resized/appeared/disappeared, in px. Run after every CSS change to see its actual effect. Pass settled (recommended for animated pages, matching how the snapshot was likely taken) — not atTime, which pins one animation frame instead of a stable end state.',
+server.tool('diff', 'Structural diff of the current layout vs a named snapshot: what moved/resized/appeared/disappeared, in px. Run after every CSS change to see its actual effect. Pass settled (recommended for animated pages, matching how the snapshot was likely taken). atTime is NOT supported here — a specific animation frame pinned by hand is not a reproducible baseline; use layout/check with atTime to inspect mid-animation states instead.',
   { url, port, viewport, viewports, name: z.string(), dir: z.string().optional().describe("Snapshot dir (default .bettercss relative to the MCP server's working directory — pass an absolute path when the server isn't launched from your project root)"), settled },
   ({ url: u, port: p, viewport: v, viewports: vs, name, dir, settled: se }) => vs
     ? diffMatrix(u, parseViewportList(vs), name, dir, { port: p, settled: se }).then((s) => text(s))

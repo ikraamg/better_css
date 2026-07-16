@@ -13,10 +13,12 @@ const infiniteFrozen = new WeakMap<object, number>()
 const unsettledAfterSeek = new WeakSet<object>()
 
 export function animateNote(client: object): string {
-  const frozen = infiniteFrozen.get(client)
-  const frozenNote = frozen ? `\nnote: ${frozen} infinite animation${frozen === 1 ? '' : 's'} frozen mid-flight` : ''
+  const pinned = infiniteFrozen.get(client)
+  const pinnedNote = pinned
+    ? `\nnote: ${pinned} infinite animation${pinned === 1 ? '' : 's'} pinned to ${pinned === 1 ? 'its' : 'their'} start (t=0) for determinism`
+    : ''
   const settleNote = unsettledAfterSeek.has(client) ? '\nnote: page had not settled after animation seek' : ''
-  return frozenNote + settleNote
+  return pinnedNote + settleNote
 }
 
 // A short cap, not interact's 2s one: seeking + freezing already puts the page in its
@@ -34,6 +36,12 @@ const POST_SEEK_SETTLE_CAP_MS = 300
 // was requested (contract 4: Animation.enable must not be armed otherwise) — withPage's
 // captureAnimations opt gates that arming, so cachedAnimations is empty when this is a no-op.
 export async function settleAnimations(client: any, opts: AnimateOpts): Promise<void> {
+  // Enforced here, at the shared choke point, so every caller (CLI single-page + matrix,
+  // all MCP tools, verify) gets the same loud rejection — the CLI additionally validates
+  // upfront for a cheaper pre-Chrome exit 2.
+  if (opts.settled && opts.atTime !== undefined) {
+    throw new Error('settled and atTime are mutually exclusive — pick one.')
+  }
   if (!needsAnimationCapture(opts)) return
   const animations = cachedAnimations(client)
   if (animations.length === 0) return
@@ -48,7 +56,11 @@ export async function settleAnimations(client: any, opts: AnimateOpts): Promise<
     if (infinite) infiniteCount++
 
     if (opts.atTime !== undefined) {
-      seeks.push({ id: a.id, time: Math.max(0, Math.min(opts.atTime, delay + duration)) })
+      // Clamp to the FULL active duration (delay + duration × iterations, same formula as
+      // the settled branch) — clamping to one iteration made every later cycle unreachable.
+      // Infinite animations have no end to clamp to: the requested time is used as-is.
+      const end = infinite ? Infinity : delay + duration * iterations
+      seeks.push({ id: a.id, time: Math.max(0, Math.min(opts.atTime, end)) })
     } else if (infinite) {
       // Can't seek to "the end" of something that never ends (contract 1) — pin to a fixed,
       // reproducible point (its own start) instead of leaving it wherever real-clock jitter
@@ -73,7 +85,9 @@ export async function settleAnimations(client: any, opts: AnimateOpts): Promise<
   // (confirmed against the CDP protocol and empirically), so animations targeting
   // different times each need their own call.
   for (const s of seeks) await client.Animation.seekAnimations({ animations: [s.id], currentTime: s.time })
-  if (infiniteCount) infiniteFrozen.set(client, infiniteCount)
+  // settled only: under atTime, infinite animations are seeked to the requested time exactly
+  // like finite ones — nothing special happened, so a "pinned to t=0" note would be a lie.
+  if (opts.settled && infiniteCount) infiniteFrozen.set(client, infiniteCount)
 
   if (opts.settled && !(await waitForSettle(client, POST_SEEK_SETTLE_CAP_MS))) unsettledAfterSeek.add(client)
 }
