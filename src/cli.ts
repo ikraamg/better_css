@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { parseViewport, parseViewportList, shutdownChrome, withPage, type Viewport } from './core/connect.js'
+import { DEFAULT_SWEEP, parseViewport, parseViewportList, shutdownChrome, withPage, type Viewport } from './core/connect.js'
 import { extract } from './core/extract.js'
 import { buildTree, findNode, renderTree } from './core/tree.js'
 import { checkInvariants, renderViolations } from './core/invariants.js'
@@ -7,6 +7,7 @@ import { explain, renderExplanation } from './core/explain.js'
 import { inspect } from './core/inspect.js'
 import { diffTrees, loadSnapshot, renderDiff, saveSnapshot } from './core/snapshot.js'
 import { checkMatrix, diffMatrix, snapshotMatrix } from './core/matrix.js'
+import { verifyMatrix } from './core/verify.js'
 import { forcePseudoStates, type PseudoStates } from './core/state.js'
 
 const USAGE = `bettercss <command> <url> [options]
@@ -16,11 +17,21 @@ const USAGE = `bettercss <command> <url> [options]
   check     <url>                              run invariants (exit 1 on violations)
   snapshot  <url> --name NAME [--dir DIR]      lock current LayoutTree to a .tree file
   diff      <url> --name NAME [--dir DIR]      diff current layout vs snapshot
+  verify    <url> [--name NAME --dir DIR]      composite: check invariants + (if --name given)
+                                                diff a snapshot, one run. First output line is
+                                                VERDICT: PASS/FAIL; exit 1 on any violation or
+                                                layout change. Always runs as a matrix, defaulting
+                                                to --viewports ${DEFAULT_SWEEP} when --viewports is
+                                                omitted (snapshots are always named <name>@WxH, even
+                                                with one viewport). States affect the invariant check
+                                                only — the diff always compares the resting (unforced)
+                                                layout, at the cost of a second page load per viewport
+                                                when --hover/--focus/--active AND --name are both given
   options: --port N (attach to Chrome at port N instead of 9222/headless)
            --viewport WxH (emulated viewport size, e.g. 1280x800)
-           --viewports W1xH1,W2xH2,... (check/snapshot/diff once per viewport)
+           --viewports W1xH1,W2xH2,... (check/snapshot/diff/verify once per viewport)
            --hover S, --focus S, --active S (force a pseudo-state on selector S;
-             layout/inspect/explain/check only, not snapshot/diff)`
+             layout/inspect/explain/check/verify only, not snapshot/diff)`
 
 function flags(argv: string[]): Record<string, string> {
   const out: Record<string, string> = {}
@@ -41,7 +52,7 @@ async function main(): Promise<number> {
   const [cmd, url] = process.argv.slice(2)
   const f = flags(process.argv.slice(4))
   if (!cmd || !url) { console.error(USAGE); return 2 }
-  if (!['layout', 'inspect', 'explain', 'check', 'snapshot', 'diff'].includes(cmd)) {
+  if (!['layout', 'inspect', 'explain', 'check', 'snapshot', 'diff', 'verify'].includes(cmd)) {
     console.error(USAGE)
     return 2
   }
@@ -52,8 +63,8 @@ async function main(): Promise<number> {
     }
   }
   const stateFlags = (['hover', 'focus', 'active'] as const).filter((k) => f[k] !== undefined)
-  if (stateFlags.length && !['layout', 'inspect', 'explain', 'check'].includes(cmd)) {
-    console.error(`--${stateFlags[0]} is only valid for layout/inspect/explain/check, not ${cmd} — forced-state snapshots invite stale-state confusion.`)
+  if (stateFlags.length && !['layout', 'inspect', 'explain', 'check', 'verify'].includes(cmd)) {
+    console.error(`--${stateFlags[0]} is only valid for layout/inspect/explain/check/verify, not ${cmd} — forced-state snapshots invite stale-state confusion.`)
     return 2
   }
   for (const name of ['depth', 'port']) {
@@ -72,11 +83,24 @@ async function main(): Promise<number> {
     try { viewports = parseViewportList(f.viewports) }
     catch (err) { console.error((err as Error).message); return 2 }
   }
-  if (stateFlags.length && viewports && cmd !== 'check') {
+  if (stateFlags.length && viewports && cmd !== 'check' && cmd !== 'verify') {
     console.error(`--${stateFlags[0]} is not supported together with --viewports yet.`)
     return 2
   }
   const opts = { port: f.port ? Number(f.port) : undefined, viewport }
+
+  if (cmd === 'verify') {
+    const states: PseudoStates = { hover: f.hover, focus: f.focus, active: f.active }
+    const { output, dirty } = await verifyMatrix(url, viewports ?? parseViewportList(DEFAULT_SWEEP), {
+      port: opts.port,
+      states: stateFlags.length ? states : undefined,
+      name: f.name,
+      dir: f.dir,
+    })
+    if (dirty) process.exitCode = 1
+    console.log(output)
+    return Number(process.exitCode ?? 0)
+  }
 
   if (viewports && ['check', 'snapshot', 'diff'].includes(cmd)) {
     const mopts = { port: opts.port }

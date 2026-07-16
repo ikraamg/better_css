@@ -157,3 +157,40 @@ test('snapshot --viewports then diff --viewports round-trips clean, then shows a
     changedSrv.close()
   }
 }, 60_000)
+
+test('verify defaults to the standard sweep, verdict first, [WxH] violations, clean viewports named', async () => {
+  const err = await cli('verify', `${srv.url}/responsive/index.html`).catch((e) => e)
+  expect(err.code).toBe(1)
+  expect(err.stdout.split('\n')[0]).toMatch(/^VERDICT: FAIL/)
+  expect(err.stdout).toContain('[375x800] viewport-overflow')
+  expect(err.stdout).toContain('1280x800=clean')
+}, 60_000)
+
+test('verify on a clean page passes with verdict-first output', async () => {
+  // basic fixture bleeds ~7px at the default sweep's 375px viewport (a CSS-grid min-width:auto
+  // quirk unrelated to verify), so pin a viewport it's actually clean at — still exercises the
+  // "verify always runs as a matrix, even with one viewport" contract (@WxH-named snapshots).
+  const { stdout } = await cli('verify', `${srv.url}/basic/index.html`, '--viewports', '1280x800')
+  expect(stdout.split('\n')[0]).toBe('VERDICT: PASS')
+}, 60_000)
+
+test('verify --hover --viewports checks each viewport with the state forced, FAIL only where it bleeds', async () => {
+  const err = await cli('verify', `${srv.url}/hover/index.html`, '--hover', '.cta', '--viewports', '1280x800,600x800').catch((e) => e)
+  expect(err.code).toBe(1)
+  expect(err.stdout.split('\n')[0]).toMatch(/^VERDICT: FAIL/)
+  expect(err.stdout).toMatch(/\[1280x800\] parent-bleed/)
+  expect(err.stdout).not.toMatch(/\[600x800\] parent-bleed/)
+}, 60_000)
+
+test('verify --name diffs the resting layout against a per-viewport snapshot; missing snapshot is a note, not a failure', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bettercss-verify-test-'))
+  await cli('snapshot', `${srv.url}/responsive/index.html`, '--viewports', '1280x800', '--name', 'v', '--dir', dir)
+
+  const { stdout: clean } = await cli('verify', `${srv.url}/responsive/index.html`, '--viewports', '1280x800', '--name', 'v', '--dir', dir)
+  expect(clean.split('\n')[0]).toBe('VERDICT: PASS')
+  expect(clean).toContain('(no layout changes)')
+
+  const { stdout: missing } = await cli('verify', `${srv.url}/responsive/index.html`, '--viewports', '1280x800', '--name', 'nope', '--dir', dir)
+  expect(missing.split('\n')[0]).toBe('VERDICT: PASS')
+  expect(missing).toContain("note: no snapshot 'nope@1280x800' — diff skipped for this viewport")
+}, 60_000)

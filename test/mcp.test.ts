@@ -19,10 +19,10 @@ const client = new Client({ name: 'test', version: '0' })
 await client.connect(new StdioClientTransport({ command: 'npx', args: ['tsx', 'src/mcp.ts'] }))
 afterAll(async () => { await client.close(); srv.close() })
 
-test('lists all six tools', async () => {
+test('lists all seven tools', async () => {
   const { tools } = await client.listTools()
   expect(tools.map((t) => t.name).sort())
-    .toEqual(['check', 'diff', 'explain', 'inspect', 'layout', 'snapshot'])
+    .toEqual(['check', 'diff', 'explain', 'inspect', 'layout', 'snapshot', 'verify'])
 })
 
 test('layout tool returns the tree', async () => {
@@ -108,6 +108,29 @@ test('snapshot/diff tools with viewports round-trip per-viewport snapshots', asy
   const text = (res.content as any)[0].text
   expect(text).toContain('[1280x800] (no layout changes)')
   expect(text).toContain('[600x800] (no layout changes)')
+}, 60_000)
+
+test('verify tool returns verdict-first output for the basic fixture', async () => {
+  // Pinned to 1280x800: the basic fixture bleeds ~7px at the default sweep's 375px viewport
+  // (a CSS-grid min-width:auto quirk unrelated to verify) — 1280x800 is where it's clean.
+  const res = await client.callTool({ name: 'verify', arguments: { url: `${srv.url}/basic/index.html`, viewports: '1280x800' } })
+  const text = (res.content as any)[0].text
+  expect(text.split('\n')[0]).toBe('VERDICT: PASS')
+})
+
+test('verify tool with name diffs the resting layout and notes a missing per-viewport snapshot', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bettercss-verify-mcp-test-'))
+  await client.callTool({
+    name: 'snapshot',
+    arguments: { url: `${srv.url}/responsive/index.html`, viewports: '1280x800', name: 'v', dir },
+  })
+  const res = await client.callTool({
+    name: 'verify',
+    arguments: { url: `${srv.url}/responsive/index.html`, viewports: '1280x800', name: 'nope', dir },
+  })
+  const text = (res.content as any)[0].text
+  expect(text.split('\n')[0]).toBe('VERDICT: PASS')
+  expect(text).toContain("note: no snapshot 'nope@1280x800' — diff skipped for this viewport")
 }, 60_000)
 
 test('shuts down its headless Chrome subprocess when the MCP session closes', async () => {

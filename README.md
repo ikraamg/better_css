@@ -22,7 +22,11 @@ Add to `.mcp.json`:
 }
 ```
 
-Tools: `layout`, `inspect`, `explain`, `check`, `snapshot`, `diff`.
+Tools: `layout`, `inspect`, `explain`, `check`, `snapshot`, `diff`, `verify`.
+
+`verify` is the composite: invariants + (if `name` is given) a snapshot diff, across
+a viewport sweep, in one call. The output's first line is always `VERDICT: PASS` or
+`VERDICT: FAIL (...)`.
 
 Note: `snapshot` and `diff` resolve a relative `dir` (default `.bettercss`)
 against the MCP server's working directory, which the host fixes at launch.
@@ -37,6 +41,7 @@ absolute `dir` argument, or register the server per-project in that project's
     npx bettercss explain http://localhost:3000 --selector .sidebar --property width
     npx bettercss snapshot http://localhost:3000 --name home
     npx bettercss diff http://localhost:3000 --name home
+    npx bettercss verify http://localhost:3000 --name home   # invariants + diff, verdict-first, exit 1 on either
 
 ## Escape hatch
 

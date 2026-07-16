@@ -2,7 +2,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
-import { pageWasBusy, parseViewport, parseViewportList, shutdownChrome, withPage } from './core/connect.js'
+import { DEFAULT_SWEEP, pageWasBusy, parseViewport, parseViewportList, shutdownChrome, withPage } from './core/connect.js'
 import { extract } from './core/extract.js'
 import { buildTree, findNode, renderTree } from './core/tree.js'
 import { checkInvariants, renderViolations } from './core/invariants.js'
@@ -10,6 +10,7 @@ import { explain, renderExplanation } from './core/explain.js'
 import { inspect } from './core/inspect.js'
 import { diffTrees, loadSnapshot, renderDiff, saveSnapshot } from './core/snapshot.js'
 import { checkMatrix, diffMatrix, snapshotMatrix } from './core/matrix.js'
+import { verifyMatrix } from './core/verify.js'
 import { forcePseudoStates, type PseudoStates } from './core/state.js'
 
 const server = new McpServer({ name: 'bettercss', version: '0.1.0' })
@@ -85,6 +86,15 @@ server.tool('diff', 'Structural diff of the current layout vs a named snapshot: 
       checkInvariants(tree)
       return renderDiff(diffTrees(loadSnapshot(name, dir), renderTree(tree)))
     }))
+
+server.tool('verify', `Composite one-shot "is this page correct": runs layout invariants and, if a name is given, also diffs a locked snapshot — across a viewport sweep, in a single call. FIRST line of the output is always VERDICT: PASS or VERDICT: FAIL (violations + layout changes), so you can branch on line 1 without parsing details. Defaults to the ${DEFAULT_SWEEP} sweep when viewports is omitted — verify always runs as a matrix, even with one viewport, so snapshot files are always named <name>@WxH (never plain <name>.tree). Pass hover/focus/active to see the layout consequences of interaction states without a mouse. IMPORTANT: states affect the invariant check only — the snapshot diff always compares the resting (unforced) layout, since diffing a forced-state layout against a resting snapshot would always report a change; this costs a second page load per viewport when both states and name are given. A missing per-viewport snapshot is reported as a note, not a failure (snapshot only the viewports you care about).`,
+  { url, port, viewports, hover, focus, active, name: z.string().optional(), dir: z.string().optional().describe("Snapshot dir (default .bettercss relative to the MCP server's working directory — pass an absolute path when the server isn't launched from your project root)") },
+  ({ url: u, port: p, viewports: vs, hover: h, focus: fo, active: a, name, dir }) => {
+    const hasStates = h !== undefined || fo !== undefined || a !== undefined
+    return verifyMatrix(u, parseViewportList(vs ?? DEFAULT_SWEEP), {
+      port: p, states: hasStates ? { hover: h, focus: fo, active: a } : undefined, name, dir,
+    }).then((r) => text(r.output))
+  })
 
 // Every session launches its own headless Chrome + temp profile (src/core/connect.ts);
 // without this, exiting the MCP session leaks both. Cover both ways a session ends:

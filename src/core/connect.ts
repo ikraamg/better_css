@@ -126,6 +126,11 @@ export function parseViewport(spec: string): { width: number; height: number } {
 
 export interface Viewport { label: string; width: number; height: number }
 
+// verify's default viewport sweep when --viewports/viewports is omitted — mobile, tablet,
+// desktop. Shared constant so the CLI USAGE text, the MCP tool description, and the
+// actual default can't drift apart.
+export const DEFAULT_SWEEP = '375x800,768x800,1280x800'
+
 // Shared by the CLI's --viewports and the MCP tools' viewports param: comma-separated
 // WxH list, e.g. "600x800,1280x800". label preserves the original WxH text for output prefixes.
 export function parseViewportList(spec: string): Viewport[] {
