@@ -44,6 +44,9 @@ async function launchChrome(): Promise<number> {
     // crashpad_handler is designed to outlive Chrome and would leak past
     // shutdownChrome (observed on Linux CI); a headless tool doesn't need it
     '--disable-crash-reporter', '--disable-breakpad',
+    // classic scrollbars consume layout width (15px on Linux), overlay ones don't —
+    // force overlay so the same page yields byte-identical geometry on every platform
+    '--enable-features=OverlayScrollbar',
     `--user-data-dir=${dir}`,
   ], { stdio: ['ignore', 'ignore', 'pipe'], detached: true }) // own process group, so shutdown can group-kill
   const port = await new Promise<number>((resolve, reject) => {
