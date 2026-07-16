@@ -32,6 +32,9 @@ async function launchChrome(): Promise<number> {
   const dir = mkdtempSync(join(tmpdir(), 'bettercss-'))
   const proc = spawn(bin, [
     '--headless=new', '--remote-debugging-port=0', '--no-first-run',
+    // crashpad_handler is designed to outlive Chrome and would leak past
+    // shutdownChrome (observed on Linux CI); a headless tool doesn't need it
+    '--disable-crash-reporter', '--disable-breakpad',
     `--user-data-dir=${dir}`,
   ], { stdio: ['ignore', 'ignore', 'pipe'] })
   const port = await new Promise<number>((resolve, reject) => {

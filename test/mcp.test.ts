@@ -7,11 +7,15 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { serveFixtures } from './helpers/server.js'
 
-function chromeLeaked(): boolean {
+function leakedProcesses(): string {
   // pgrep exits 1 (no match) once shutdownChrome has killed the headless Chrome
   // and removed its bettercss-* temp profile dir; exits 0 while it's still alive.
-  try { execSync('pgrep -f "bettercss-"', { stdio: 'pipe' }); return true }
-  catch { return false }
+  // Returns the offending process list so a failure names the culprit.
+  try { return execSync('pgrep -af "bettercss-" || pgrep -fl "bettercss-"', { stdio: 'pipe' }).toString().trim() }
+  catch { return '' }
+}
+function chromeLeaked(): boolean {
+  return leakedProcesses() !== ''
 }
 
 const srv = await serveFixtures('fixtures')
@@ -142,5 +146,5 @@ test('shuts down its headless Chrome subprocess when the MCP session closes', as
   while (chromeLeaked() && Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 250))
   }
-  expect(chromeLeaked()).toBe(false)
+  expect(leakedProcesses(), 'processes still matching bettercss-').toBe('')
 }, 60_000)
