@@ -159,7 +159,20 @@ export async function forEachViewport<T>(
   return out
 }
 
-export async function shutdownChrome(): Promise<void> {
+// Memoized so a second caller AWAITS the in-flight shutdown instead of returning
+// early: the MCP server's stdio-close handler starts shutdown, then the host's
+// follow-up SIGTERM re-enters — an instant return there would process.exit(0)
+// mid-Browser.close and orphan the whole Chrome tree (observed on Linux CI).
+let shuttingDown: Promise<void> | null = null
+
+export function shutdownChrome(): Promise<void> {
+  if (shuttingDown) return shuttingDown
+  if (!launched) return Promise.resolve()
+  shuttingDown = doShutdown().finally(() => { shuttingDown = null })
+  return shuttingDown
+}
+
+async function doShutdown(): Promise<void> {
   if (!launched) return
   const { proc, port, dir } = launched
   launched = null
