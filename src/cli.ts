@@ -13,6 +13,7 @@ import { assertNoInteractNavigation, hasInteractSteps, interactWasUnsettled, run
 import { animateNote, needsAnimationCapture, settleAnimations, type AnimateOpts } from './core/animate.js'
 import { measureStability, renderStability } from './core/stability.js'
 import { applyFixes, buildFixes, renderFixes } from './core/fix.js'
+import { blame } from './core/blame.js'
 
 const USAGE = `bettercss <command> <url> [options]
   layout    <url> [--selector S] [--depth N]   print the LayoutTree (budgeted to 400 lines unless --depth is given)
@@ -59,6 +60,31 @@ const USAGE = `bettercss <command> <url> [options]
                                                 the cost of a second page load per viewport when
                                                 --hover/--focus/--active/--click/--scroll-to AND --name
                                                 are both given
+  blame     --root DIR --page REL.html [--selector S] [--max-commits N] [--viewport WxH]
+                                                which commit broke the layout. Scope v1: STATIC
+                                                roots only — each historical version is served
+                                                from a temp 'git worktree add --detach' checkout
+                                                with the built-in static server (no dev-server/
+                                                build-step support yet; a --serve CMD hook is the
+                                                named future path). Determines the CURRENT bad
+                                                state (violations at HEAD's working tree for
+                                                --page, optionally scoped to --selector's
+                                                subtree); if clean, prints "nothing to blame —
+                                                page is clean" and exits 0. Otherwise walks HEAD's
+                                                ancestors backwards (linear, newest→oldest, capped
+                                                at --max-commits, default 25 — linear beats bisect
+                                                because layout states can flicker) until it finds
+                                                the first GOOD commit; the culprit is the BAD
+                                                commit right after it. Prints 'broken by <sha>
+                                                "<subject>" (<date>, <author>)', the layout delta
+                                                between the good and bad commits, and the
+                                                violations introduced. Exit 1 when a culprit is
+                                                found; if every commit within the cap is still
+                                                bad, prints "still broken N commits back — raise
+                                                --max-commits" (also exit 1). The user's HEAD/
+                                                index/working tree are never touched — all
+                                                checkouts are detached worktrees in a scratch
+                                                temp dir, removed and pruned afterward.
   stability <url> [--duration MS] [--threshold SCORE] [--viewport WxH]
                                                 load-time layout-shift report (Cumulative Layout
                                                 Shift): waits --duration ms (default 3000) past
@@ -104,6 +130,7 @@ interface Flags {
   dir?: string
   settled?: string; 'at-time'?: string
   root?: string; apply?: string
+  page?: string; 'max-commits'?: string
 }
 
 // Repeated occurrences of these flags accumulate into an array instead of last-wins.
@@ -141,7 +168,35 @@ const REQUIRED: Record<string, string[]> = {
 }
 
 async function main(): Promise<number> {
-  const [cmd, url] = process.argv.slice(2)
+  const cmd = process.argv[2]
+
+  // blame takes --root/--page flags, not a positional <url> — handled up front, before the
+  // rest of main() assumes argv[3] is a URL.
+  if (cmd === 'blame') {
+    const f = flags(process.argv.slice(3))
+    if (!f.root) { console.error(`blame requires --root\n\n${USAGE}`); return 2 }
+    if (!f.page) { console.error(`blame requires --page\n\n${USAGE}`); return 2 }
+    if (f['max-commits'] !== undefined && Number.isNaN(Number(f['max-commits']))) {
+      console.error(`--max-commits must be a number, got '${f['max-commits']}'`)
+      return 2
+    }
+    let viewport: { width: number; height: number } | undefined
+    if (f.viewport !== undefined) {
+      try { viewport = parseViewport(f.viewport) }
+      catch (err) { console.error((err as Error).message); return 2 }
+    }
+    const { output, dirty } = await blame(f.root, f.page, {
+      selector: f.selector,
+      maxCommits: f['max-commits'] ? Number(f['max-commits']) : undefined,
+      viewport,
+      port: f.port ? Number(f.port) : undefined,
+    })
+    if (dirty) process.exitCode = 1
+    console.log(output)
+    return Number(process.exitCode ?? 0)
+  }
+
+  const url = process.argv[3]
   const f = flags(process.argv.slice(4))
   if (!cmd || !url) { console.error(USAGE); return 2 }
   if (!['layout', 'inspect', 'explain', 'check', 'snapshot', 'diff', 'verify', 'stability', 'fix'].includes(cmd)) {

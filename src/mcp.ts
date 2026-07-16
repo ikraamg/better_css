@@ -16,6 +16,7 @@ import { assertNoInteractNavigation, hasInteractSteps, interactWasUnsettled, run
 import { animateNote, needsAnimationCapture, settleAnimations, type AnimateOpts } from './core/animate.js'
 import { measureStability, renderStability } from './core/stability.js'
 import { applyFixes, buildFixes, renderFixes } from './core/fix.js'
+import { blame } from './core/blame.js'
 
 const server = new McpServer({ name: 'bettercss', version: '0.1.0' })
 
@@ -230,6 +231,17 @@ server.tool('stability', 'Load-time layout-shift report (Cumulative Layout Shift
     }
     return measureStability(u, { port: p, viewport: v ? parseViewport(v) : undefined, duration, threshold }).then((r) => text(renderStability(r)))
   })
+
+server.tool('blame', 'Which commit broke the layout. Scope v1: STATIC roots only — each historical version is served from a temp `git worktree add --detach` checkout with the built-in static server (no dev-server/build-step support yet). Determines the CURRENT bad state (violations at HEAD\'s working tree for `page`, optionally scoped to `selector`\'s subtree); if clean, returns "nothing to blame — page is clean". Otherwise walks HEAD\'s ancestors backwards (linear, newest→oldest, capped at maxCommits, default 25 — linear beats bisect because layout states can flicker) until it finds the first GOOD commit; the culprit is the BAD commit right after it. Returns `broken by <sha> "<subject>" (<date>, <author>)`, the layout delta between the good and bad commits (moved/resized/appeared/disappeared, in px), and the violations introduced. If every commit within the cap is still bad: "still broken N commits back — raise maxCommits". The user\'s HEAD/index/working tree are never touched — all checkouts are detached worktrees in a scratch temp dir, removed and pruned afterward.',
+  {
+    root: z.string().describe('Local git repo directory (or a subdirectory of one) containing the page — git finds the repo root'),
+    page: z.string().describe('Page path relative to root, e.g. index.html'),
+    selector: z.string().optional().describe("Scope violations to this selector's subtree (substring match, same convention as fix's selector)"),
+    maxCommits: z.number().optional().describe('How many ancestor commits to walk back before giving up (default 25)'),
+    viewport, port,
+  },
+  ({ root, page, selector, maxCommits, viewport: v, port: p }) =>
+    blame(root, page, { selector, maxCommits, viewport: v ? parseViewport(v) : undefined, port: p }).then((r) => text(r.output)))
 
 // Every session launches its own headless Chrome + temp profile (src/core/connect.ts);
 // without this, exiting the MCP session leaks both. Cover both ways a session ends:

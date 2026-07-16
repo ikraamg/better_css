@@ -35,10 +35,10 @@ const client = new Client({ name: 'test', version: '0' })
 await client.connect(new StdioClientTransport({ command: process.execPath, args: ['--import', 'tsx', 'src/mcp.ts'] }))
 afterAll(async () => { await client.close(); srv.close() })
 
-test('lists all nine tools', async () => {
+test('lists all ten tools', async () => {
   const { tools } = await client.listTools()
   expect(tools.map((t) => t.name).sort())
-    .toEqual(['check', 'diff', 'explain', 'fix', 'inspect', 'layout', 'snapshot', 'stability', 'verify'])
+    .toEqual(['blame', 'check', 'diff', 'explain', 'fix', 'inspect', 'layout', 'snapshot', 'stability', 'verify'])
 })
 
 test('layout tool returns the tree', async () => {

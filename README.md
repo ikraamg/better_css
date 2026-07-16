@@ -40,7 +40,7 @@ Chromium's DevTools Protocol exposes everything DevTools itself knows: one bulk
 `CSS.getMatchedStylesForNode` returns the complete cascade for any element —
 every rule that matched, its specificity, and the stylesheet position it came
 from (source-mapped back through your build). bettercss packages that truth
-into nine composable tools instead of megabytes of protocol JSON.
+into ten composable tools instead of megabytes of protocol JSON.
 
 The core representation is the **LayoutTree**: one line per rendered element,
 deterministic (same render → byte-identical text), with warnings inline:
@@ -67,6 +67,7 @@ screenshot comparison.
 | `verify` | **"Is this OK?"** — one call: invariants across a viewport sweep (default 375/768/1280) + optional snapshot diffs. First line is always `VERDICT: PASS` or `VERDICT: FAIL (…)`. |
 | `check` | Layout-bug scan: viewport overflow, visible parent bleed, clipped text, unintended overlap, zero-size/tiny tap targets — exact px + the suspect rule at `file:line`. |
 | `fix` | Propose (default) or **apply** mechanical patches for fixable violations (clipped text, tiny tap targets, a fixed px width bleeding/overflowing). DRY-RUN unless `--apply`; writes are confined to `--root` and guarded by a stale-source check. See **Safety** below. |
+| `blame` | **"Which commit broke this?"** — walks a git repo's history backwards (newest→oldest, capped at 25 commits by default) checking out each commit into a scratch `git worktree`, until it finds the first commit where the current violation is gone. Names the culprit (`file:line`-style: sha, subject, date, author) plus the layout delta and violations it introduced. STATIC roots only in v1 (no dev-server/build step per checkout); the user's HEAD/index/working tree are never touched. |
 | `layout` | The LayoutTree of the rendered page (scope with `selector`/`depth`; auto-budgeted on huge pages). |
 | `inspect` | One element in depth: box model, non-default styles, stacking context, why it has its width/height. |
 | `explain` | Trace any property to its source: which declaration wins (`file:line`, source-mapped), which lost and why, and what layout constraint overrides the declared value (flex-basis, min/max, grid). |
@@ -155,6 +156,7 @@ bettercss layout  http://localhost:3000 --selector main
 bettercss explain http://localhost:3000 --selector .sidebar --property width
 bettercss snapshot http://localhost:3000 --name home --dir .bettercss
 bettercss diff     http://localhost:3000 --name home --dir .bettercss
+bettercss blame    --root . --page index.html --selector .sidebar
 ```
 
 `check`/`verify` exit 1 on violations — drop them straight into CI.
