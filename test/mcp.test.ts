@@ -23,7 +23,10 @@ function chromeLeaked(): boolean {
 
 const srv = await serveFixtures('fixtures')
 const client = new Client({ name: 'test', version: '0' })
-await client.connect(new StdioClientTransport({ command: 'npx', args: ['tsx', 'src/mcp.ts'] }))
+// Single-process spawn (no npx→tsx chain): the SDK's shutdown signals target the
+// spawned pid, and a chain head dying orphans the real server with stdin still
+// open — it then never sees the close and leaks its Chrome (seen on Linux CI).
+await client.connect(new StdioClientTransport({ command: process.execPath, args: ['--import', 'tsx', 'src/mcp.ts'] }))
 afterAll(async () => { await client.close(); srv.close() })
 
 test('lists all seven tools', async () => {
