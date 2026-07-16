@@ -174,32 +174,17 @@ export function shutdownChrome(): Promise<void> {
 
 async function doShutdown(): Promise<void> {
   if (!launched) return
-  const { proc, port, dir } = launched
+  const { proc, dir } = launched
   launched = null
-  // Ask Chrome to close itself first: a bare SIGTERM to the main process can
-  // orphan renderer processes in headless mode (observed on Linux CI), while
-  // Browser.close tears down the whole process tree. Must connect to the
-  // BROWSER-level websocket — the default CDP() page-target connect fails once
-  // every tab is closed, which is exactly the state at shutdown time.
-  try {
-    const { webSocketDebuggerUrl } = await CDP.Version({ port })
-    const client: any = await CDP({ target: webSocketDebuggerUrl })
-    await client.Browser.close()
-    try { await client.close() } catch { /* connection dies with the browser */ }
-  } catch {
-    proc.kill()
-  }
+  // Group-SIGKILL the whole Chrome tree at once. Nothing needs a graceful
+  // close — the profile dir is deleted below anyway — and shutdown must fit
+  // inside an MCP host's kill grace (the SDK SIGKILLs the server ~4s after
+  // stdio close; a slow graceful path orphaned renderers on Linux CI).
+  // Chrome is spawned detached (its own process group), so -pid takes
+  // browser + renderers + GPU together.
+  try { process.kill(-proc.pid!, 'SIGKILL') } catch { proc.kill('SIGKILL') }
   if (proc.exitCode === null && proc.signalCode === null) {
-    const exited = new Promise((r) => proc.once('exit', r))
-    const timedOut = await Promise.race([
-      exited.then(() => false),
-      new Promise<boolean>((r) => setTimeout(() => r(true), 3000)),
-    ])
-    if (timedOut) {
-      // last resort: kill the whole process group so no renderer survives
-      try { process.kill(-proc.pid!, 'SIGKILL') } catch { proc.kill('SIGKILL') }
-      await exited
-    }
+    await new Promise((r) => proc.once('exit', r))
   }
   // Chrome's helper processes outlive the main process briefly and can still be
   // writing to the profile dir (ENOTEMPTY race, seen on Linux CI). Cleanup is
