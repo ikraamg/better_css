@@ -374,3 +374,15 @@ test('stability rejects --hover (interact/state flags are out of scope in v8)', 
   expect(err.code).toBe(2)
   expect(err.stderr).toContain('--hover')
 }, 60_000)
+
+// USAGE claims stability takes none of these — silently accepting them would be a lie
+// (worst case: --viewports silently ran the default 1280x800 with no signal).
+test.each([
+  ['--settled', []],
+  ['--at-time', ['0']],
+  ['--viewports', ['400x800,600x800']],
+])('stability rejects %s with exit 2 instead of silently ignoring it', async (flag, value) => {
+  const err = await cli('stability', `${srv.url}/shifty/index.html`, flag, ...value).catch((e) => e)
+  expect(err.code).toBe(2)
+  expect(err.stderr).toContain(`${flag} is not valid for stability`)
+}, 60_000)

@@ -1,0 +1,20 @@
+<!doctype html><html><head><style>
+* { margin: 0; box-sizing: border-box; }
+</style></head><body>
+<img class="photo" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" style="display:block;width:100%;height:200px;background:#ccc;">
+<script>
+// Shifts as early as a layout shift can physically exist: double-rAF guarantees exactly
+// one paint has happened (a synchronous mutation during parsing produces NO shift — no
+// prior paint to shift from, verified empirically), then inserts immediately (~60-120ms,
+// typically before the load event settles). Exists to pin the observer-armed-before-any-
+// page-script guarantee in stability.ts.
+requestAnimationFrame(function () {
+  requestAnimationFrame(function () {
+    var ad = document.createElement('div')
+    ad.style.height = '200px'
+    ad.style.background = 'tomato'
+    document.body.insertBefore(ad, document.querySelector('.photo'))
+  })
+})
+</script>
+</body></html>

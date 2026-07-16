@@ -71,7 +71,7 @@ screenshot comparison.
 | `explain` | Trace any property to its source: which declaration wins (`file:line`, source-mapped), which lost and why, and what layout constraint overrides the declared value (flex-basis, min/max, grid). |
 | `snapshot` | Lock the current layout to a named `.tree` file (per-viewport with `--viewports`). |
 | `diff` | Structural diff vs a snapshot: what moved/resized/appeared/disappeared, in px. |
-| `stability` | Load-time layout-shift report (Cumulative Layout Shift): what moved, when, and by how much, plus unsized `img`/`video` suspects. Timing-dependent (an observation, not a deterministic snapshot). |
+| `stability` | Load-time layout-shift report (Cumulative Layout Shift): what moved, when, and by how much, plus unsized `img`/`video` suspects. Timing-dependent (an observation, not a deterministic snapshot). Score is the raw sum over the observation window; the CWV metric uses session windows — multi-burst pages may score higher here. |
 
 **Interaction states:** pass `--hover/--focus/--active <selector>` (CLI) or the
 matching params (MCP) to force pseudo-states without a mouse — combinable with

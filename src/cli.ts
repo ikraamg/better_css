@@ -38,6 +38,9 @@ const USAGE = `bettercss <command> <url> [options]
                                                 Shift): waits --duration ms (default 3000) past
                                                 load, then reports every shift and any img/video
                                                 shift source missing width+height attributes.
+                                                Score is the raw sum over the window (the CWV
+                                                metric uses session windows — multi-burst pages
+                                                may score higher here).
                                                 Exit 1 when score > threshold (default 0.1, the
                                                 Core Web Vitals "good" boundary). TIMING-DEPENDENT:
                                                 an observation, not a deterministic snapshot — local
@@ -132,6 +135,14 @@ async function main(): Promise<number> {
   if (hasInteractSteps(interact) && !['layout', 'inspect', 'explain', 'check', 'verify'].includes(cmd)) {
     console.error(`--click/--scroll-to are only valid for layout/inspect/explain/check/verify, not ${cmd} — interacted-state snapshots invite stale-state confusion.`)
     return 2
+  }
+  // USAGE promises stability takes none of these; silently no-oping them would lie
+  // (worst case: --viewports quietly running the default 1280x800 with no signal).
+  for (const name of ['settled', 'at-time', 'viewports'] as const) {
+    if (cmd === 'stability' && f[name] !== undefined) {
+      console.error(`--${name} is not valid for stability — it observes one natural page load (no animation seeking, no viewport matrix).`)
+      return 2
+    }
   }
   for (const name of ['depth', 'port', 'at-time', 'duration', 'threshold']) {
     if (f[name] !== undefined && Number.isNaN(Number(f[name]))) {

@@ -37,6 +37,17 @@ test('stability on the fluid fixture reports zero score (no shifts)', async () =
   expect(renderStability(result)).toBe('STABILITY: 0 (threshold 0.1)')
 }, 20_000)
 
+// Regression guard for the load-bearing install-order guarantee: the observer must be
+// armed before ANY page script runs. early.html shifts as soon as a shift can physically
+// exist (double-rAF after first paint, ~60-120ms) — if the addScriptToEvaluateOnNewDocument
+// install ever moves to after Page.navigate, this shift is lost and this test fails.
+test('a shift in the first frames after first paint is still caught (observer pre-install)', async () => {
+  const result = await measureStability(`${srv.url}/shifty/early.html`, { viewport: { width: 400, height: 800 }, duration: 500 })
+  expect(result.shifts.length).toBeGreaterThan(0)
+  expect(result.shifts[0].selector).toBe('img.photo')
+  expect(result.shifts[0].atMs).toBeLessThan(300)
+}, 20_000)
+
 test('--threshold overrides the default 0.1 boundary', async () => {
   const result = await measureStability(`${srv.url}/shifty/index.html`, {
     viewport: { width: 400, height: 800 },
