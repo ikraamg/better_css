@@ -36,10 +36,11 @@ const USAGE = `bettercss <command> <url> [options]
            --viewports W1xH1,W2xH2,... (check/snapshot/diff/verify once per viewport)
            --hover S, --focus S, --active S (force a pseudo-state on selector S;
              layout/inspect/explain/check/verify only, not snapshot/diff)
-           --click S (repeatable; real click on selector S), --scroll-to S_or_Y (selector or
-             pixel y) — interaction pre-steps, layout/inspect/explain/check/verify only, not
-             snapshot/diff. Order: navigate, scroll-to, clicks (in argument order), settle,
-             then --hover/--focus/--active, then capture`
+           --click S (repeatable; real click on selector S — the target is first scrolled
+             into view, centered, and the scroll is left where it lands), --scroll-to S_or_Y
+             (selector or pixel y) — interaction pre-steps, layout/inspect/explain/check/verify
+             only, not snapshot/diff. Order: navigate, scroll-to, clicks (in argument order),
+             settle, then --hover/--focus/--active, then capture`
 
 interface Flags {
   [key: string]: string | string[] | undefined

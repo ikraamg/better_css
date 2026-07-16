@@ -29,12 +29,17 @@ async function scrollToTarget(client: any, target: string): Promise<void> {
   await client.Runtime.callFunctionOn({ objectId: object.objectId, functionDeclaration: 'function(){ this.scrollIntoView() }' })
 }
 
-// Real trusted click: box-model center + mousePressed/mouseReleased, exactly what a
-// user click dispatches. DOM.getBoxModel's quad is already viewport-relative for the
-// CURRENT scroll position (verified empirically — no manual scroll-offset subtraction
-// needed, unlike raw document coordinates), so this works correctly after scrollTo.
+// Real trusted click: mousePressed/mouseReleased at the target's box-model center,
+// exactly what a user click dispatches. Input.dispatchMouseEvent hit-tests VIEWPORT
+// coordinates, so the target is first scrolled into view (centered), like a real user
+// would — a below-fold target would otherwise silently miss. The scroll is left where
+// it lands (documented in the tool descriptions). DOM.getBoxModel's quad is already
+// viewport-relative for the current scroll position (verified empirically — no manual
+// scroll-offset subtraction needed), so it is read AFTER the scroll.
 async function clickTarget(client: any, selector: string): Promise<void> {
   const nodeId = await resolveNode(client, selector)
+  const { object } = await client.DOM.resolveNode({ nodeId })
+  await client.Runtime.callFunctionOn({ objectId: object.objectId, functionDeclaration: 'function(){ this.scrollIntoView({ block: "center" }) }' })
   const { model } = await client.DOM.getBoxModel({ nodeId })
   const [x0, y0, , , x2, y2] = model.content
   const x = (x0 + x2) / 2
@@ -43,17 +48,32 @@ async function clickTarget(client: any, selector: string): Promise<void> {
   await client.Input.dispatchMouseEvent({ type: 'mouseReleased', x, y, button: 'left', clickCount: 1 })
 }
 
-// Two consecutive animation frames with an identical cheap layout signature = settled.
-// document.querySelectorAll('*').length catches subtree insert/remove that
-// getBoundingClientRect alone would miss; scrollY catches scroll-driven changes.
+// Two consecutive animation frames with an identical layout signature AND no live
+// animations = settled. The signature hashes every element's getBoundingClientRect —
+// unlike a body-box summary it reflects transform transitions and fixed-position
+// movement, which never change the body's own box. The getAnimations() check closes
+// a cold-start gap the hash can't see: a just-started animation can still be
+// play-pending across both sampled frames (identical rects) yet about to move.
+// Float accumulation is deterministic within a frame; the modulo keeps the magnitude
+// well under 2^53 so fractional pixels aren't lost.
+// ponytail: a perpetual animation (spinner) means every interact run burns the full
+// 2s cap and gets the unsettled note — filter getAnimations to finite ones if that
+// ever hurts.
 const SETTLE_EXPR = `new Promise((resolve) => {
   const sig = () => {
-    const r = document.body.getBoundingClientRect()
-    return r.x + ',' + r.y + ',' + r.width + ',' + r.height + ',' + window.scrollY + ',' + document.querySelectorAll('*').length
+    let h = 0
+    const els = document.querySelectorAll('*')
+    for (const el of els) {
+      const r = el.getBoundingClientRect()
+      h = (h % 0xffffff) * 31 + r.x + r.y * 3 + r.width * 7 + r.height * 13
+    }
+    return h + ':' + window.scrollY + ':' + els.length
   }
   requestAnimationFrame(() => {
     const a = sig()
-    requestAnimationFrame(() => { const b = sig(); resolve(a === b ? b : null) })
+    requestAnimationFrame(() => {
+      resolve(document.getAnimations().length === 0 && sig() === a)
+    })
   })
 })`
 
@@ -63,7 +83,7 @@ async function waitForSettle(client: any): Promise<boolean> {
   const deadline = Date.now() + SETTLE_CAP_MS
   do {
     const { result } = await client.Runtime.evaluate({ expression: SETTLE_EXPR, awaitPromise: true, returnByValue: true })
-    if (result.value !== null) return true
+    if (result.value === true) return true
   } while (Date.now() < deadline)
   return false
 }
@@ -75,24 +95,56 @@ async function waitForSettle(client: any): Promise<boolean> {
 export async function runInteractSteps(client: any, steps: InteractSteps): Promise<void> {
   if (!hasInteractSteps(steps)) return
 
-  // Armed for the whole phase (not just clicks) — only checked around clicks below,
-  // since scrollTo triggering a real navigation is out of scope for this guard.
+  const stripHash = (u: string) => u.split('#')[0]
+  const { result: start } = await client.Runtime.evaluate({ expression: 'location.href', returnByValue: true })
+  const startUrl = stripHash(start.value)
+  const navError = (to: string) =>
+    new Error(`--click caused a navigation to ${to} — interact steps are for same-page UI`)
+
+  // Armed for the ENTIRE interact phase, settle included — a click handler may
+  // schedule a delayed redirect (setTimeout + location.href) that lands well after
+  // the click itself. Hash-only jumps never fire frameNavigated (verified
+  // empirically); the stripHash compare is belt and braces for any same-document
+  // frame event.
   let navigatedTo: string | null = null
-  client.Page.frameNavigated(({ frame }: any) => { if (!frame.parentId) navigatedTo = frame.url })
+  client.Page.frameNavigated(({ frame }: any) => {
+    if (!frame.parentId && stripHash(frame.url) !== startUrl) navigatedTo = frame.url
+  })
+  // Flush + check: chrome-remote-interface delivers messages in order over one
+  // connection (the same guarantee explain.ts's collectSheets relies on), so one
+  // benign round-trip guarantees an already-queued frameNavigated has been delivered
+  // before the check. The flush's own error is swallowed: a navigation destroys the
+  // execution context, which is exactly the case being reported.
+  const navCheck = async () => {
+    await client.Runtime.evaluate({ expression: '1' }).catch(() => {})
+    if (navigatedTo) throw navError(navigatedTo)
+  }
 
   if (steps.scrollTo !== undefined) await scrollToTarget(client, steps.scrollTo)
 
   for (const selector of steps.click ?? []) {
     await clickTarget(client, selector)
-    // Flush: chrome-remote-interface delivers events for a domain in order over one
-    // connection (same guarantee explain.ts's collectSheets relies on for
-    // styleSheetAdded) — this Runtime round-trip guarantees a frameNavigated already
-    // queued by the click has been delivered to our listener before we check it.
-    // Swallow errors here: a navigation can detach the old execution context, which is
-    // exactly the case we're about to report via navigatedTo anyway.
-    await client.Runtime.evaluate({ expression: '1' }).catch(() => {})
-    if (navigatedTo) throw new Error(`--click caused a navigation to ${navigatedTo} — interact steps are for same-page UI`)
+    await navCheck()
   }
 
-  if (!(await waitForSettle(client))) unsettled.add(client)
+  let settled: boolean
+  try {
+    settled = await waitForSettle(client)
+  } catch (err) {
+    // A navigation landing mid-settle destroys the execution context and CDP throws
+    // its raw error ("Inspected target navigated or closed" / "Execution context was
+    // destroyed") — rethrow as the clear navigation error when that's the cause.
+    await navCheck()
+    throw err
+  }
+  await navCheck()
+  // Final guard: compare the frame's current URL to the pre-interact one
+  // (hash-stripped) — catches a delayed redirect that landed and fully committed
+  // between the per-click checks and here.
+  // ponytail: a redirect firing after this returns (during the caller's capture)
+  // still escapes; closing that needs a post-capture check in every caller.
+  const { result: end } = await client.Runtime.evaluate({ expression: 'location.href', returnByValue: true }).catch(() => ({ result: {} }))
+  if (end.value && stripHash(end.value) !== startUrl) throw navError(end.value)
+
+  if (!settled) unsettled.add(client)
 }

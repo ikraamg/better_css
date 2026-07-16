@@ -29,7 +29,7 @@ const active = z.string().optional().describe('Force :active on this selector be
 // interaction pre-steps — layout/inspect/explain/check/verify only, not snapshot/diff (same
 // stale-state reasoning as hover/focus/active). Order: scrollTo, then click(s) in array
 // order, then a settle wait, then hover/focus/active, then capture.
-const click = z.array(z.string()).optional().describe('Real trusted click(s) on these selectors, in order, before reading the page. Runs after scrollTo and before hover/focus/active. Aborts if a click navigates to a new page.')
+const click = z.array(z.string()).optional().describe('Real trusted click(s) on these selectors, in order, before reading the page. Each target is first scrolled into view (centered) and the scroll is left where it lands. Runs after scrollTo and before hover/focus/active. Aborts if a click navigates to a new page.')
 const scrollTo = z.string().optional().describe('Scroll to this selector (scrollIntoView) or pixel Y before reading the page. Runs before click(s).')
 
 function page(

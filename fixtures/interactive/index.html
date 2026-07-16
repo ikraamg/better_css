@@ -2,12 +2,18 @@
 * { margin: 0; box-sizing: border-box; }
 body { height: 2000px; }
 .wrap { width: 300px; }
-#menu-btn { width: 80px; height: 32px; }
-#menu { display: none; width: 400px; height: 100px; background: #eee; }
-#menu.open { display: block; }
+#menu-btn, #arm-btn, #fire-btn, #late-nav { width: 80px; height: 32px; }
+#menu, #menu2 { display: none; width: 400px; height: 100px; background: #eee; }
+#menu.open, #menu2.open { display: block; }
+#late-nav.leaving { animation: leaving 0.3s linear infinite; }
+@keyframes leaving { from { transform: translateX(0); } to { transform: translateX(100px); } }
+#anim-box { width: 50px; height: 50px; background: #ccf; transition: transform 1s linear; }
+#anim-box.moved { transform: translateX(200px); }
 #hash-link { display: block; width: 80px; height: 32px; }
 #away-link { display: block; width: 80px; height: 32px; }
 #section { margin-top: 900px; }
+#fold-btn { width: 80px; height: 32px; }
+#fold-btn.wide { width: 400px; }
 #top-link { display: none; position: fixed; top: 0; right: 0; width: 16px; height: 16px; overflow: hidden; }
 #top-link.show { display: block; }
 </style></head><body>
@@ -15,13 +21,37 @@ body { height: 2000px; }
   <button id="menu-btn">Menu</button>
   <div id="menu"></div>
 </div>
+<div class="wrap">
+  <button id="arm-btn">Arm</button>
+  <button id="fire-btn">Fire</button>
+  <div id="menu2"></div>
+</div>
+<button id="late-nav">Leave</button>
+<div id="anim-box"></div>
 <a id="hash-link" href="#section">Section</a>
 <a id="away-link" href="/interactive/other.html">Away</a>
 <div id="section">Section content</div>
+<div class="wrap"><button id="fold-btn">Fold</button></div>
 <a id="top-link" href="#top" aria-label="Back to top"></a>
 <script>
 document.getElementById('menu-btn').addEventListener('click', function () {
   document.getElementById('menu').classList.toggle('open')
+})
+document.getElementById('arm-btn').addEventListener('click', function () {
+  document.body.dataset.armed = '1'
+})
+document.getElementById('fire-btn').addEventListener('click', function () {
+  if (document.body.dataset.armed) document.getElementById('menu2').classList.add('open')
+})
+document.getElementById('late-nav').addEventListener('click', function () {
+  this.classList.add('leaving') // realistic redirect UX: spinner-style animation while leaving
+  setTimeout(function () { location.href = 'other.html' }, 150)
+})
+document.getElementById('anim-box').addEventListener('click', function () {
+  this.classList.add('moved')
+})
+document.getElementById('fold-btn').addEventListener('click', function () {
+  this.classList.add('wide')
 })
 window.addEventListener('scroll', function () {
   document.getElementById('top-link').classList.toggle('show', window.scrollY > 400)

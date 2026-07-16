@@ -240,9 +240,20 @@ test('--click on a selector matching nothing exits 2 with resolveNode\'s suggest
   expect(err.stderr).toContain("No element matches '.nope'")
 }, 60_000)
 
-test('two --click occurrences accumulate into an array and run in order: open then close leaves no violations', async () => {
-  const { stdout } = await cli('check', `${srv.url}/interactive/index.html`, '--click', '#menu-btn', '--click', '#menu-btn')
-  expect(stdout).toContain('no violations')
+test('two --click occurrences accumulate and run in argument order (fixture: B only violates if A ran first)', async () => {
+  const err = await cli('check', `${srv.url}/interactive/index.html`, '--click', '#arm-btn', '--click', '#fire-btn').catch((e) => e)
+  expect(err.code).toBe(1)
+  expect(err.stdout).toContain('div#menu2.open bleeds 100px outside div.wrap')
+
+  const { stdout: reversed } = await cli('check', `${srv.url}/interactive/index.html`, '--click', '#fire-btn', '--click', '#arm-btn')
+  expect(reversed).toContain('no violations')
+}, 60_000)
+
+test('--click on a below-fold target scrolls it into view first, so the click actually lands', async () => {
+  const err = await cli('check', `${srv.url}/interactive/index.html`, '--click', '#fold-btn').catch((e) => e)
+  expect(err.code).toBe(1)
+  expect(err.stdout).toContain('parent-bleed')
+  expect(err.stdout).toContain('button#fold-btn')
 }, 60_000)
 
 test('a repeated --click does not disturb any other flag\'s last-wins behavior', async () => {
