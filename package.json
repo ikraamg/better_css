@@ -27,6 +27,7 @@
   "bin": { "csstruth": "./dist/cli.js" },
   "files": ["dist", "skills", "README.md", "LICENSE"],
   "scripts": {
+    "prepublishOnly": "npm run typecheck && npm run build",
     "build": "tsc",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.test.json"
