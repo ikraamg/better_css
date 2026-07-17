@@ -1,12 +1,12 @@
 import { afterAll, expect, test } from 'vitest'
-import { execFile, execSync, spawn, type ChildProcess } from 'node:child_process'
+import { execFile, spawn, type ChildProcess } from 'node:child_process'
 import { promisify } from 'node:util'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { shutdownChrome, withPage } from '../src/core/connect.js'
 import { runLoop } from '../src/core/watch.js'
-import { serveFixtures } from './helpers/server.js'
+import { chromePids, serveFixtures } from './helpers/server.js'
 
 const run = promisify(execFile)
 const cli = (...args: string[]) => run('npx', ['tsx', 'src/cli.ts', ...args], { encoding: 'utf8' })
@@ -60,17 +60,6 @@ const CSS_BLEED = '* { margin: 0; padding: 0; } .wrap { width: 300px; height: 10
 function writeFixture(dir: string, css: string): void {
   writeFileSync(join(dir, 'index.html'), HTML)
   writeFileSync(join(dir, 'styles.css'), css)
-}
-
-// Chrome trees launched by bettercss (mcp.test.ts/blame.test.ts's [b] trick keeps the
-// pattern from matching this grep's own argv or an operator's shell prompt).
-function chromePids(): Set<string> {
-  try {
-    return new Set(
-      execSync('ps -eo pid,args | grep "user-data-dir=.*[b]ettercss-" | grep -v grep', { stdio: 'pipe' })
-        .toString().trim().split('\n').filter(Boolean).map((l) => l.trim().split(/\s+/)[0]),
-    )
-  } catch { return new Set() }
 }
 
 async function waitFor(buf: () => string, substr: string, timeoutMs: number): Promise<void> {

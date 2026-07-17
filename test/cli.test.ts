@@ -1,10 +1,10 @@
 import { afterAll, expect, test } from 'vitest'
-import { execFile } from 'node:child_process'
+import { execFile, spawn, type ChildProcess } from 'node:child_process'
 import { promisify } from 'node:util'
 import { cpSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { serveFixtures } from './helpers/server.js'
+import { chromePids, serveFixtures } from './helpers/server.js'
 
 const run = promisify(execFile)
 const srv = await serveFixtures('fixtures')
@@ -454,4 +454,29 @@ test('fix --apply with nothing fixable exits 0 with "no patches applied"', async
   const { stdout } = await cli('fix', `${srv.url}/zero-size/index.html`, '--root', 'fixtures', '--apply')
   expect(stdout).toContain('no mechanical fix for zero-size')
   expect(stdout).toContain('no patches applied')
+}, 60_000)
+
+// SIGINT on a non-watch command must still tear down Chrome, not orphan the tree — same
+// shape as blame.test.ts's own mid-walk SIGINT test. Single-process spawn (no npx→tsx
+// chain) so the signal reaches the CLI itself; waiting for a NEW Chrome pid to appear
+// (instead of a fixed sleep) proves the signal lands after Chrome is actually up.
+test('SIGINT during check exits 130 with no Chrome orphans', async () => {
+  const pidsBefore = chromePids()
+  const child = spawn(process.execPath, ['--import', 'tsx', 'src/cli.ts', 'check', `${srv.url}/basic/index.html`], { stdio: ['ignore', 'pipe', 'pipe'] })
+
+  const spawnDeadline = Date.now() + 30_000
+  while (![...chromePids()].some((p) => !pidsBefore.has(p)) && Date.now() < spawnDeadline) {
+    await new Promise((r) => setTimeout(r, 50))
+  }
+  expect([...chromePids()].some((p) => !pidsBefore.has(p))).toBe(true)
+
+  child.kill('SIGINT')
+  const code = await new Promise<number | null>((r) => child.on('close', (c) => r(c)))
+  expect(code).toBe(130)
+
+  const cleanupDeadline = Date.now() + 15_000
+  while ([...chromePids()].some((p) => !pidsBefore.has(p)) && Date.now() < cleanupDeadline) {
+    await new Promise((r) => setTimeout(r, 250))
+  }
+  expect([...chromePids()].filter((p) => !pidsBefore.has(p))).toEqual([])
 }, 60_000)

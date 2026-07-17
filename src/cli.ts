@@ -193,6 +193,18 @@ const REQUIRED: Record<string, string[]> = {
 async function main(): Promise<number> {
   const cmd = process.argv[2]
 
+  // Every command except watch (which owns its own SIGINT/SIGTERM exit-0 contract, armed
+  // inside watch() itself) gets this shared safety net: an unhandled Ctrl+C mid-check/
+  // layout/blame/etc. must still tear down the Chrome tree, not orphan it (live-confirmed
+  // to leak the whole tree without this). blame composes with it: its own per-walk handler
+  // defers once it sees more than one SIGINT listener registered, cleaning up its
+  // worktrees first and leaving the shutdown+exit to this one.
+  if (cmd !== 'watch') {
+    const onSignal = () => { void shutdownChrome().finally(() => process.exit(130)) }
+    process.on('SIGINT', onSignal)
+    process.on('SIGTERM', onSignal)
+  }
+
   // blame takes --root/--page flags, not a positional <url> — handled up front, before the
   // rest of main() assumes argv[3] is a URL.
   if (cmd === 'blame') {

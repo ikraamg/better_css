@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from 'vitest'
-import { execFile, execFileSync, execSync, spawn } from 'node:child_process'
+import { execFile, execFileSync, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { shutdownChrome } from '../src/core/connect.js'
+import { chromePids } from './helpers/server.js'
 
 afterAll(async () => { await shutdownChrome() })
 
@@ -144,17 +145,6 @@ test('blame tool (MCP) mirrors the CLI: names the culprit commit', async () => {
 }, 90_000)
 
 // --- interrupt / honesty hardening ---
-
-// Chrome trees launched by bettercss (mcp.test.ts's [b] trick keeps the pattern from
-// matching this grep's own argv or an operator's shell prompt).
-function chromePids(): Set<string> {
-  try {
-    return new Set(
-      execSync('ps -eo pid,args | grep "user-data-dir=.*[b]ettercss-" | grep -v grep', { stdio: 'pipe' })
-        .toString().trim().split('\n').filter(Boolean).map((l) => l.trim().split(/\s+/)[0]),
-    )
-  } catch { return new Set() }
-}
 
 // blame's scratch checkout dirs (bettercss-blame-XXXXXX), NOT the throwaway test repos
 // (bettercss-blame-repo-XXXXXX) this file creates itself.
