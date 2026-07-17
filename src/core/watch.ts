@@ -83,7 +83,7 @@ async function readSignature(client: any): Promise<unknown> {
 // synchronous to clean up here: flipping `stopped` and waking the sleep lets the loop
 // return normally, so withPage's own finally (page/target close) and cli.ts's
 // shutdownChrome (browser process) run through the ordinary async exit path.
-async function runLoop(client: any, url: string, interval: number): Promise<number> {
+export async function runLoop(client: any, url: string, interval: number): Promise<number> {
   let stopped = false
   let wake: (() => void) | undefined
   const onSignal = () => { stopped = true; wake?.() }
@@ -130,6 +130,23 @@ async function runLoop(client: any, url: string, interval: number): Promise<numb
       lastSig = await readSignature(client)
     }
 
+    // Wraps a settleAndReport call: a CDP throw here can legitimately mean the page just
+    // went unreachable (dev server died between the reachable() gate below and this call's
+    // own CDP work actually running) — re-check before deciding. Unreachable gets the same
+    // exit-1 contract as the direct reachable() check below; still reachable means a REAL
+    // bug in the report path, which must surface (rethrown), not be swallowed as if the
+    // page had merely died.
+    const reportOrUnreachable = async (): Promise<number | null> => {
+      try {
+        await settleAndReport()
+        return null
+      } catch (err) {
+        if (await reachable(url)) throw err
+        console.log(`[${ts()}] page unreachable — stopping`)
+        return 1
+      }
+    }
+
     while (!stopped) {
       await sleep(interval)
       if (stopped) break
@@ -142,7 +159,8 @@ async function runLoop(client: any, url: string, interval: number): Promise<numb
           return 1
         }
         console.log(`[${ts()}] page reloaded`)
-        await settleAndReport()
+        const code = await reportOrUnreachable()
+        if (code !== null) return code
         continue
       }
 
@@ -160,7 +178,8 @@ async function runLoop(client: any, url: string, interval: number): Promise<numb
       }
       if (sig === lastSig) continue // quiet: nothing changed, no heartbeat spam
 
-      await settleAndReport()
+      const code = await reportOrUnreachable()
+      if (code !== null) return code
     }
     return 0
   } finally {

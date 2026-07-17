@@ -4,7 +4,8 @@ import { promisify } from 'node:util'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { shutdownChrome } from '../src/core/connect.js'
+import { shutdownChrome, withPage } from '../src/core/connect.js'
+import { runLoop } from '../src/core/watch.js'
 import { serveFixtures } from './helpers/server.js'
 
 const run = promisify(execFile)
@@ -311,3 +312,67 @@ test('watch prints nothing beyond the startup lines while the page is idle', asy
     srv.close()
   }
 }, 90_000)
+
+// crash-vs-unreachable: a CDP throw while reporting a detected change (inside
+// settleAndReport) must be told apart from a real bug — if the page is ALSO unreachable
+// (the dev server died in that exact window), runLoop must fall back to the same exit-1
+// "page unreachable" contract, not let the raw error escape as an uncaught exit-2 crash.
+// Deterministic seam, not an HTTP-teardown race (an abrupt srv.close() mid-reload proved
+// unreproducible across dozens of manual trials — Chrome handles a dead-server reload by
+// committing to an error page rather than throwing): the fixture server is closed from
+// INSIDE a patched DOMSnapshot.captureSnapshot, at the exact moment settleAndReport's
+// second capture runs, so reachable() is provably true right up to the throw and false
+// right after — no timing luck required.
+test('runLoop reports "page unreachable" instead of crashing when a CDP failure coincides with the dev server dying', async () => {
+  const dir = tempFixture()
+  writeFixture(dir, CSS_START)
+  const srv = await serve(dir)
+  const url = `${srv.url}/index.html`
+
+  await withPage(url, async (client) => {
+    let captures = 0
+    const origCapture = client.DOMSnapshot.captureSnapshot.bind(client.DOMSnapshot)
+    client.DOMSnapshot.captureSnapshot = async (...args: unknown[]) => {
+      captures++
+      if (captures === 2) {
+        srv.close() // kill the dev server at the exact moment settleAndReport recaptures
+        throw new Error('simulated CDP failure')
+      }
+      return origCapture(...args)
+    }
+
+    const loop = runLoop(client, url, 30)
+    await new Promise((r) => setTimeout(r, 300)) // past the initial capture and a few idle ticks
+    await client.Runtime.evaluate({ expression: "document.querySelector('.box').style.width = '999px'" })
+    const code = await loop
+    expect(code).toBe(1)
+  })
+}, 30_000)
+
+// The other half of the same guard: when the page is STILL reachable, a CDP failure while
+// reporting is a real bug and must surface, not be swallowed as if the server had died.
+test('runLoop rethrows a CDP failure during change-reporting when the page is still reachable', async () => {
+  const dir = tempFixture()
+  writeFixture(dir, CSS_START)
+  const srv = await serve(dir)
+  const url = `${srv.url}/index.html`
+
+  try {
+    await expect(withPage(url, async (client) => {
+      let captures = 0
+      const origCapture = client.DOMSnapshot.captureSnapshot.bind(client.DOMSnapshot)
+      client.DOMSnapshot.captureSnapshot = async (...args: unknown[]) => {
+        captures++
+        if (captures === 2) throw new Error('simulated CDP failure')
+        return origCapture(...args)
+      }
+
+      const loop = runLoop(client, url, 30)
+      await new Promise((r) => setTimeout(r, 300))
+      await client.Runtime.evaluate({ expression: "document.querySelector('.box').style.width = '999px'" })
+      await loop
+    })).rejects.toThrow('simulated CDP failure')
+  } finally {
+    srv.close()
+  }
+}, 30_000)
