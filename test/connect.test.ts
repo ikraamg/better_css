@@ -2,7 +2,7 @@ import { readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { afterAll, expect, test } from 'vitest'
 import { serveFixtures } from './helpers/server.js'
-import { shutdownChrome, stragglerPids, withPage } from '../src/core/connect.js'
+import { abandonedProfilePids, shutdownChrome, stragglerPids, withPage } from '../src/core/connect.js'
 
 const srv = await serveFixtures('fixtures')
 afterAll(async () => { srv.close(); await shutdownChrome() })
@@ -66,6 +66,23 @@ test('stragglerPids targets only processes referencing our exact profile dir', (
   expect(stragglerPids(ps, '/tmp/bettercss-AAA')).toEqual([123, 456])
   expect(stragglerPids(ps, '/tmp/bettercss-AAAB')).toEqual([789])
   expect(stragglerPids('', '/tmp/bettercss-AAA')).toEqual([])
+})
+
+// Seam for the cross-invocation startup sweep: only processes carrying OUR naming
+// prefix whose profile dir is GONE from disk are abandoned. A dir still on disk could
+// be a live concurrent bettercss — never touched.
+test('abandonedProfilePids targets only bettercss profiles whose dir no longer exists', () => {
+  const ps = [
+    '  111 /opt/chrome/chrome --headless=new --user-data-dir=/tmp/bettercss-GONE1',
+    '  222 /opt/chrome/chrome --type=renderer --user-data-dir=/tmp/bettercss-LIVE --x=1',
+    '  333 /opt/chrome/chrome --type=renderer --user-data-dir=/tmp/bettercss-GONE2 --x=2',
+    '  444 /opt/chrome/chrome --user-data-dir=/tmp/other-tool-profile', // not our prefix
+    '  555 /opt/chrome/chrome --no-user-data-dir-at-all',
+    'junk --user-data-dir=/tmp/bettercss-GONE1', // NaN pid dropped
+  ].join('\n')
+  const exists = (dir: string) => dir === '/tmp/bettercss-LIVE'
+  expect(abandonedProfilePids(ps, '/tmp/bettercss-', exists)).toEqual([111, 333])
+  expect(abandonedProfilePids(ps, '/tmp/bettercss-', () => true)).toEqual([]) // all dirs live -> touch nothing
 })
 
 // MUST BE LAST in this file: the terminal latch is process-permanent by design (a

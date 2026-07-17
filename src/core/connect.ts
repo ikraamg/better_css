@@ -1,6 +1,6 @@
 import CDP from 'chrome-remote-interface'
 import { execSync, spawn, type ChildProcess } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -35,7 +35,11 @@ async function reachable(port: number): Promise<boolean> {
 }
 
 async function launchChrome(): Promise<number> {
-  const { existsSync } = await import('node:fs')
+  // Self-heal before spawning: reap any Chrome abandoned by a PREVIOUS invocation
+  // (CI telemetry proved a shutdown can genuinely reach "0 pids remain" and still leak —
+  // on a loaded runner, fork-to-ps-visibility outruns any in-process sweep, and an exited
+  // process can't reap what it never saw).
+  sweepAbandonedProfiles()
   const bin = CHROME_PATHS.find((p) => existsSync(p))
   if (!bin) throw new Error(HELP)
   const dir = mkdtempSync(join(tmpdir(), 'bettercss-'))
@@ -229,6 +233,35 @@ export function stragglerPids(psOutput: string, dir: string): number[] {
     .filter((pid) => Number.isInteger(pid) && pid > 0)
 }
 
+// Pure filter seam for sweepAbandonedProfiles: ps lines whose --user-data-dir starts
+// with OUR naming prefix AND whose profile dir no longer exists per `exists` (shutdown
+// rm'd it → provably abandoned). A dir still on disk could be a live concurrent
+// bettercss — never touched. Injected `exists` keeps this unit-testable.
+export function abandonedProfilePids(psOutput: string, prefix: string, exists: (dir: string) => boolean): number[] {
+  return psOutput.split('\n').flatMap((l) => {
+    const dir = l.match(/--user-data-dir=(\S+)/)?.[1]
+    if (!dir || !dir.startsWith(prefix) || exists(dir)) return []
+    const pid = Number(l.trim().split(/\s+/)[0])
+    return Number.isInteger(pid) && pid > 0 ? [pid] : []
+  })
+}
+
+// Cross-invocation self-healing: SIGKILL processes still carrying a bettercss profile
+// dir that no longer exists on disk. Run at every launchChrome (before spawning) and in
+// doShutdown's final phase. Rationale: CI telemetry proved the in-process shutdown can
+// reach "final: 0 pids remain" and STILL leak — on a loaded runner a renderer forked at
+// kill-time becomes ps-visible only after the process exits, so no in-process sweep can
+// ever reap it; the NEXT invocation does instead. Best-effort, never fatal.
+export function sweepAbandonedProfiles(): number {
+  try {
+    const psOut = execSync('ps -eo pid=,args=', { stdio: 'pipe' }).toString()
+    const pids = abandonedProfilePids(psOut, join(tmpdir(), 'bettercss-'), existsSync)
+    for (const pid of pids) { try { process.kill(pid, 'SIGKILL') } catch {} }
+    if (pids.length) debugShutdown(`abandoned-profile sweep: reaped ${pids.length} pids`)
+    return pids.length
+  } catch { return 0 }
+}
+
 // Env-gated shutdown telemetry (BETTERCSS_DEBUG_SHUTDOWN=1): one stderr line per phase,
 // so a CI-only leak arrives self-explaining (the blame SIGINT test captures its child's
 // stderr into the failure message; CI's workflow sets the env for every suite shutdown).
@@ -297,13 +330,16 @@ async function doShutdown(): Promise<void> {
   // Chrome's helper processes outlive the main process briefly and can still be
   // writing to the profile dir (ENOTEMPTY race, seen on Linux CI). Cleanup is
   // best-effort: retry twice, then leave it to the OS temp reaper — never fatal.
-  for (let attempt = 0; ; attempt++) {
+  for (let attempt = 0; attempt < 3; attempt++) {
     try {
       rmSync(dir, { recursive: true, force: true })
-      return
+      break
     } catch {
-      if (attempt >= 2) return
+      if (attempt >= 2) break
       await new Promise((r) => setTimeout(r, 150))
     }
   }
+  // Our dir is (usually) gone now, so any late-visible renderer of OURS also qualifies
+  // as abandoned — catches same-process latecomers; launchChrome catches cross-invocation.
+  sweepAbandonedProfiles()
 }
