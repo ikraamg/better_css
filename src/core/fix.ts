@@ -191,8 +191,12 @@ export async function buildFixes(
 }
 
 // Writes every patch. Patches targeting the same file are grouped into one read-modify-write
-// so a second patch's line index isn't computed against a half-written file.
-export function applyFixes(outcomes: FixOutcome[]): void {
+// so a second patch's line index isn't computed against a half-written file. buildFixes'
+// stale-guard only proves the line matched at SCAN time — an editor, a filesystem watcher, or
+// another long-lived MCP call can still change that exact line before this write happens, so
+// each patch is re-verified against the line actually on disk right before it's applied;
+// anything that drifted is skipped (message returned, not written) rather than clobbered.
+export function applyFixes(outcomes: FixOutcome[]): string[] {
   const byFile = new Map<string, Patch[]>()
   for (const o of outcomes) {
     if (o.kind !== 'patch') continue
@@ -200,11 +204,19 @@ export function applyFixes(outcomes: FixOutcome[]): void {
     arr.push(o.patch)
     byFile.set(o.patch.file, arr)
   }
+  const skipped: string[] = []
   for (const [file, patches] of byFile) {
     const lines = readFileSync(file, 'utf8').split('\n')
-    for (const p of patches) lines[p.line - 1] = p.after
+    for (const p of patches) {
+      if (lines[p.line - 1] !== p.before) {
+        skipped.push(`${p.violation.rule}: ${file}:${p.line} — changed since scan, skipping`)
+        continue
+      }
+      lines[p.line - 1] = p.after
+    }
     writeFileSync(file, lines.join('\n'))
   }
+  return skipped
 }
 
 // Unified-diff-style hunks, one per violation: a patch shows file:line and the changed line;

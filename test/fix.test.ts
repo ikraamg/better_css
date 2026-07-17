@@ -136,6 +136,44 @@ test('stale-source guard refuses a drifted patch only; other patches in the same
 
 // (d, CLI-level) is covered in test/cli.test.ts; (f, MCP-level) in test/mcp.test.ts
 
+// write-time race: the file can change between buildFixes' stale-guard scan and applyFixes'
+// actual write (an editor, a watcher, another long-lived MCP call) — applyFixes must re-check
+// the target line right before writing it, not trust the line buildFixes saw minutes earlier.
+test('applyFixes skips a patch whose line changed on disk since buildFixes scanned it, leaving the newer content intact', async () => {
+  const workDir = mkdtempSync(join(tmpdir(), 'bettercss-fix-race-'))
+  cpSync('fixtures/fixable', join(workDir, 'fixable'), { recursive: true })
+  const tmpSrv = await serveFixtures(workDir)
+  try {
+    const url = `${tmpSrv.url}/fixable/index.html`
+    const outcomes = await withPage(url, async (client) => {
+      const violations = checkInvariants(buildTree(await extract(client)))
+      return buildFixes(client, url, violations, workDir)
+    })
+    const clip = patchFor(outcomes, 'text-clip')
+    const cssPath = clip.file
+
+    // Simulate a concurrent edit landing on the exact suspect line AFTER buildFixes scanned
+    // it but BEFORE applyFixes writes it.
+    const raceLine = '  overflow: hidden; /* edited concurrently */'
+    const lines = readFileSync(cssPath, 'utf8').split('\n')
+    lines[clip.line - 1] = raceLine
+    writeFileSync(cssPath, lines.join('\n'))
+
+    const skipped = applyFixes(outcomes)
+    expect(skipped.some((m) => m.includes('changed since scan'))).toBe(true)
+
+    const final = readFileSync(cssPath, 'utf8').split('\n')
+    expect(final[clip.line - 1]).toBe(raceLine) // untouched, not clobbered with p.after
+    expect(final[clip.line - 1]).not.toContain('text-overflow: ellipsis')
+
+    // other patches in the SAME file, whose lines did NOT race, still land
+    expect(final.join('\n')).toContain('min-width: 24px; min-height: 24px;')
+    expect(final.join('\n')).toContain('max-width: 100%; /* was: width: 400px */')
+  } finally {
+    tmpSrv.close()
+  }
+})
+
 // (e) px-width bleed patch: max-width:100% + comment, after-check improves
 test('a fixed px-width parent-bleed patches to max-width:100% with the original kept as a comment', async () => {
   const workDir = mkdtempSync(join(tmpdir(), 'bettercss-fix-bleed-'))

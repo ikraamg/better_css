@@ -157,7 +157,8 @@ server.tool('fix', 'Propose (default) or APPLY mechanical patches for fixable vi
       if (!apply) return text(out)
       if (!outcomes.some((o) => o.kind === 'patch')) return text(`${out}\n\nno patches applied`)
 
-      applyFixes(outcomes)
+      const skipped = applyFixes(outcomes)
+      if (skipped.length) out += `\n${skipped.join('\n')}`
       const afterViolations = await withPage(u, capture, pageOpts)
       const beforeKeys = new Set(beforeViolations.map((vi) => `${vi.rule} ${vi.selector}`))
       const newViolations = afterViolations.filter((vi) => !beforeKeys.has(`${vi.rule} ${vi.selector}`))

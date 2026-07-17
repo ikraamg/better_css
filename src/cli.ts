@@ -322,7 +322,7 @@ async function main(): Promise<number> {
       console.log('\nno patches applied')
       return 0
     }
-    applyFixes(outcomes)
+    for (const msg of applyFixes(outcomes)) console.log(msg)
 
     const afterViolations = await withPage(url, capture, opts)
     const beforeKeys = new Set(beforeViolations.map((v) => `${v.rule} ${v.selector}`))
