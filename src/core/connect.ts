@@ -64,12 +64,17 @@ async function launchChrome(): Promise<number> {
 }
 
 async function resolvePort(explicit?: number): Promise<number> {
+  if (terminating) throw new Error('shutting down')
   if (explicit !== undefined) {
     if (await reachable(explicit)) return explicit
     throw new Error(`No Chrome at port ${explicit}. ${HELP}`)
   }
   if (await reachable(9222)) return 9222
   if (launched && (await reachable(launched.port))) return launched.port
+  // Re-check after the awaits above: a terminal shutdown can begin while the
+  // reachability probes were in flight — launching now would create the exact
+  // orphan the latch exists to prevent (kill Chrome A, relaunch B, exit).
+  if (terminating) throw new Error('shutting down')
   // NOTE: shared promise so concurrent callers await one launch instead of racing.
   if (!launching) launching = launchChrome().finally(() => { launching = null })
   return launching
@@ -195,7 +200,17 @@ export async function forEachViewport<T>(
 // mid-Browser.close and orphan the whole Chrome tree (observed on Linux CI).
 let shuttingDown: Promise<void> | null = null
 
-export function shutdownChrome(): Promise<void> {
+// Terminal latch: once a { terminal: true } shutdown begins, resolvePort refuses all
+// further launches ('shutting down'), permanently — the process is exiting. Without it,
+// a signal handler's `await shutdownChrome()` (kills Chrome A, launched=null) races any
+// in-flight work whose next withPage → resolvePort sees launched===null and launches
+// Chrome B, which process.exit() then abandons (observed on 2-core Linux CI: blame's
+// SIGINT test left 2 pids after a full 15s poll, exit code 130 — the handler ran fine,
+// the walk relaunched behind it).
+let terminating = false
+
+export function shutdownChrome(opts: { terminal?: boolean } = {}): Promise<void> {
+  if (opts.terminal) terminating = true
   if (shuttingDown) return shuttingDown
   if (!launched && !launching) return Promise.resolve()
   shuttingDown = doShutdown().finally(() => { shuttingDown = null })

@@ -201,7 +201,9 @@ export async function runLoop(client: any, url: string, interval: number): Promi
 // race-free: the removeListener calls and runLoop's own process.on run in the same
 // synchronous stretch (signals only ever arrive via the event loop between them).
 export async function watch(url: string, opts: WatchOpts = {}): Promise<number> {
-  const early = () => { void shutdownChrome().finally(() => process.exit(0)) }
+  // terminal: latches connect.ts against relaunches — startup's in-flight withPage would
+  // otherwise relaunch Chrome behind this kill and process.exit would abandon it.
+  const early = () => { void shutdownChrome({ terminal: true }).finally(() => process.exit(0)) }
   process.on('SIGINT', early)
   process.on('SIGTERM', early)
   try {

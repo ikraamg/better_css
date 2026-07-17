@@ -248,7 +248,10 @@ server.tool('blame', 'Which commit broke the layout. Scope v1: STATIC roots only
 // without this, exiting the MCP session leaks both. Cover both ways a session ends:
 // the host killing us directly, and the client ending our stdio.
 async function shutdown(): Promise<void> {
-  await shutdownChrome()
+  // terminal: latches connect.ts against relaunches — an in-flight tool call's next
+  // withPage would otherwise relaunch Chrome behind this kill and process.exit(0)
+  // would abandon it.
+  await shutdownChrome({ terminal: true })
   process.exit(0)
 }
 process.on('SIGINT', shutdown)

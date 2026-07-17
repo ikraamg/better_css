@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { shutdownChrome } from '../src/core/connect.js'
-import { chromePids } from './helpers/server.js'
+import { chromePids, chromeProcessLines } from './helpers/server.js'
 
 afterAll(async () => { await shutdownChrome() })
 
@@ -204,12 +204,13 @@ test('SIGINT mid-walk cleans worktrees, scratch dir, and Chrome, exiting 130', a
   expect(worktrees).toHaveLength(1)
   // no scratch checkout dir left in tmp
   expect([...scratchDirs()].filter((d) => !scratchBefore.has(d))).toEqual([])
-  // no NEW Chrome tree left behind (teardown is asynchronous — poll like mcp.test.ts)
+  // no NEW Chrome tree left behind (teardown is asynchronous — poll like mcp.test.ts).
+  // Assert on the FULL ps lines, not bare pids, so a CI-only failure names the survivors.
   const chromeDeadline = Date.now() + 15_000
   while ([...chromePids()].some((p) => !pidsBefore.has(p)) && Date.now() < chromeDeadline) {
     await new Promise((r) => setTimeout(r, 250))
   }
-  expect([...chromePids()].filter((p) => !pidsBefore.has(p))).toEqual([])
+  expect(chromeProcessLines().filter((l) => !pidsBefore.has(l.split(/\s+/)[0]))).toEqual([])
 }, 90_000)
 
 // SIGINT to the MCP server AFTER a blame call completed: blame's handler must be disarmed

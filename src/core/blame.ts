@@ -144,7 +144,9 @@ export async function blame(root: string, page: string, opts: BlameOpts): Promis
     interrupted = true
     cleanupCheckouts()
     if (process.listeners('SIGINT').length > 1) return
-    void shutdownChrome().finally(() => process.exit(130))
+    // terminal: latches connect.ts against relaunches — the walk's in-flight checkAt would
+    // otherwise relaunch Chrome behind this kill and process.exit would abandon it.
+    void shutdownChrome({ terminal: true }).finally(() => process.exit(130))
   }
   process.on('SIGINT', onSigint)
 

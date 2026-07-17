@@ -49,3 +49,20 @@ test('navigating to a dead server rejects instead of reporting the neterror page
   await expect(withPage('http://127.0.0.1:1/', async () => {}))
     .rejects.toThrow(/Failed to load/)
 })
+
+// MUST BE LAST in this file: the terminal latch is process-permanent by design (a
+// terminal shutdown means the process is exiting) and vitest isolates test files into
+// their own workers, so poisoning the rest of THIS file is the only blast radius.
+//
+// The bug this pins (observed on 2-core Linux CI, never reproducible on macOS): a signal
+// handler's `await shutdownChrome()` kills Chrome A and sets launched=null; an in-flight
+// walk/loop step's next withPage → resolvePort then LAUNCHES Chrome B, which the
+// handler's process.exit() abandons — a real orphan surviving the leak poll. The latch
+// makes any launch attempt after a terminal shutdown reject instead.
+test('after a terminal shutdown, withPage refuses to launch a new Chrome', async () => {
+  // ensure a Chrome exists so the shutdown actually kills one (mirrors the CI sequence)
+  await withPage(`${srv.url}/basic/index.html`, async () => {})
+  await shutdownChrome({ terminal: true })
+  await expect(withPage(`${srv.url}/basic/index.html`, async () => {}))
+    .rejects.toThrow('shutting down')
+})

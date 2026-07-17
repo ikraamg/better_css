@@ -8,11 +8,15 @@ import { execSync } from 'node:child_process'
 // Chrome trees launched by bettercss (the [b] character class keeps this grep's own
 // argv, or an operator's shell prompt, from matching its own pattern). Shared by every
 // test file that polls for a leaked/orphaned Chrome process around a SIGINT/SIGTERM test.
-export function chromePids(): Set<string> {
+// Full `pid args` lines, so a failing leak assertion names the survivors (mirrors
+// mcp.test.ts's leakedProcesses forensics).
+export function chromeProcessLines(): string[] {
   try {
-    return new Set(
-      execSync('ps -eo pid,args | grep "user-data-dir=.*[b]ettercss-" | grep -v grep', { stdio: 'pipe' })
-        .toString().trim().split('\n').filter(Boolean).map((l) => l.trim().split(/\s+/)[0]),
-    )
-  } catch { return new Set() }
+    return execSync('ps -eo pid,args | grep "user-data-dir=.*[b]ettercss-" | grep -v grep', { stdio: 'pipe' })
+      .toString().trim().split('\n').filter(Boolean).map((l) => l.trim())
+  } catch { return [] }
+}
+
+export function chromePids(): Set<string> {
+  return new Set(chromeProcessLines().map((l) => l.split(/\s+/)[0]))
 }

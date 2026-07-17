@@ -207,7 +207,10 @@ async function main(): Promise<number> {
   // defers once it sees more than one SIGINT listener registered, cleaning up its
   // worktrees first and leaving the shutdown+exit to this one.
   if (cmd !== 'watch') {
-    const onSignal = () => { void shutdownChrome().finally(() => process.exit(130)) }
+    // terminal: also latches connect.ts against relaunches — the in-flight command's next
+    // withPage would otherwise see launched===null (Chrome just killed) and spawn a fresh
+    // Chrome that process.exit(130) abandons (observed on Linux CI).
+    const onSignal = () => { void shutdownChrome({ terminal: true }).finally(() => process.exit(130)) }
     process.on('SIGINT', onSignal)
     process.on('SIGTERM', onSignal)
   }
@@ -461,5 +464,9 @@ async function main(): Promise<number> {
 
 main()
   .then((code) => { process.exitCode = code })
-  .catch((err) => { console.error(err.message); process.exitCode = 2 })
+  .catch((err) => {
+    // 'shutting down' is a signal handler's terminal latch rejecting in-flight work —
+    // the handler exits 130/0 on its own; a raw stderr line here would be noise.
+    if (err.message !== 'shutting down') { console.error(err.message); process.exitCode = 2 }
+  })
   .finally(() => shutdownChrome())
