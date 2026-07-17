@@ -1,5 +1,5 @@
 import CDP from 'chrome-remote-interface'
-import { spawn, type ChildProcess } from 'node:child_process'
+import { execSync, spawn, type ChildProcess } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -217,6 +217,18 @@ export function shutdownChrome(opts: { terminal?: boolean } = {}): Promise<void>
   return shuttingDown
 }
 
+// Pure parse of `ps -eo pid=,args=` output → pids of processes referencing OUR profile
+// dir exactly (delimited by whitespace or end-of-line, so /tmp/bettercss-AAA never
+// matches a /tmp/bettercss-AAAB line). Exported as the unit-test seam for doShutdown's
+// straggler sweep — the zygote race itself only reproduces on multi-core Linux CI.
+export function stragglerPids(psOutput: string, dir: string): number[] {
+  const ref = `--user-data-dir=${dir}`
+  return psOutput.split('\n')
+    .filter((l) => l.includes(ref + ' ') || l.trimEnd().endsWith(ref))
+    .map((l) => Number(l.trim().split(/\s+/)[0]))
+    .filter((pid) => Number.isInteger(pid) && pid > 0)
+}
+
 async function doShutdown(): Promise<void> {
   // A signal can land while launchChrome is still in flight (watch's startup guard,
   // blame's mid-walk handler) — Chrome's process exists from the moment spawn()
@@ -237,6 +249,19 @@ async function doShutdown(): Promise<void> {
   if (proc.exitCode === null && proc.signalCode === null) {
     await new Promise((r) => proc.once('exit', r))
   }
+  // On Linux, the sandbox/zygote places renderers OUTSIDE the main process group, so the
+  // group-SIGKILL above can miss them — one caught mid-spawn never detects the dead
+  // browser and idles forever (CI forensics: 2 renderers, spawned at the instant of the
+  // kill, survived a 15s poll). Sweep stragglers by our unique profile path; best-effort,
+  // never fatal. NOT --no-sandbox/--no-zygote: we render arbitrary URLs — keep the sandbox.
+  try {
+    const sweep = (): number => {
+      const pids = stragglerPids(execSync('ps -eo pid=,args=', { stdio: 'pipe' }).toString(), dir)
+      for (const pid of pids) { try { process.kill(pid, 'SIGKILL') } catch {} }
+      return pids.length
+    }
+    for (let i = 0; sweep() > 0 && i < 3; i++) await new Promise((r) => setTimeout(r, 150))
+  } catch {}
   // Chrome's helper processes outlive the main process briefly and can still be
   // writing to the profile dir (ENOTEMPTY race, seen on Linux CI). Cleanup is
   // best-effort: retry twice, then leave it to the OS temp reaper — never fatal.

@@ -2,7 +2,7 @@ import { readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { afterAll, expect, test } from 'vitest'
 import { serveFixtures } from './helpers/server.js'
-import { withPage, shutdownChrome } from '../src/core/connect.js'
+import { shutdownChrome, stragglerPids, withPage } from '../src/core/connect.js'
 
 const srv = await serveFixtures('fixtures')
 afterAll(async () => { srv.close(); await shutdownChrome() })
@@ -48,6 +48,24 @@ test('navigating to a dead server rejects instead of reporting the neterror page
   // nothing listens on port 1 (a reserved, always-refused TCP port)
   await expect(withPage('http://127.0.0.1:1/', async () => {}))
     .rejects.toThrow(/Failed to load/)
+})
+
+// Seam for doShutdown's renderer-straggler sweep (the zygote race that motivates it —
+// Linux sandbox renderers living OUTSIDE Chrome's process group, so the group-SIGKILL
+// misses them — only reproduces on multi-core Linux CI; CI is the arbiter for the race).
+// This pins the targeting: only OUR profile dir's processes, exact-delimited.
+test('stragglerPids targets only processes referencing our exact profile dir', () => {
+  const ps = [
+    '  123 /opt/chrome/chrome --headless=new --user-data-dir=/tmp/bettercss-AAA',
+    '  456 /opt/chrome/chrome --type=renderer --user-data-dir=/tmp/bettercss-AAA --seatbelt=7',
+    '  789 /opt/chrome/chrome --headless=new --user-data-dir=/tmp/bettercss-AAAB', // different dir, shared prefix
+    '  321 /opt/chrome/chrome --user-data-dir=/tmp/other-profile',
+    'garbage line with no pid --user-data-dir=/tmp/bettercss-AAA', // NaN pid dropped
+    '',
+  ].join('\n')
+  expect(stragglerPids(ps, '/tmp/bettercss-AAA')).toEqual([123, 456])
+  expect(stragglerPids(ps, '/tmp/bettercss-AAAB')).toEqual([789])
+  expect(stragglerPids('', '/tmp/bettercss-AAA')).toEqual([])
 })
 
 // MUST BE LAST in this file: the terminal latch is process-permanent by design (a
