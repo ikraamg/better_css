@@ -12,14 +12,14 @@ function leakedProcesses(): string {
   // Empty once shutdownChrome has killed the headless Chrome tree. On failure
   // the PID/PPID/args triple names the culprit AND its parent (ppid 1 = orphan).
   //
-  // Matches the actual leaked-Chrome signature — `--user-data-dir=<tmpdir>/bettercss-*`
-  // (connect.ts's launchChrome) — not a bare "bettercss-" substring: an operator's own
+  // Matches the actual leaked-Chrome signature — `--user-data-dir=<tmpdir>/csstruth-*`
+  // (connect.ts's launchChrome) — not a bare "csstruth-" substring: an operator's own
   // resident shell can easily have that substring in its command line too (a `cd
-  // .../better_css` prompt, another agent session's command mentioning a `bettercss-`
-  // test dir prefix, ...), which a bare pattern would misreport as a leak. The [b]
+  // .../csstruth` prompt, another agent session's command mentioning a `csstruth-`
+  // test dir prefix, ...), which a bare pattern would misreport as a leak. The [c]
   // character class still keeps the pattern from matching this grep's own argv.
   try {
-    return execSync('ps -eo pid,ppid,args | grep "user-data-dir=.*[b]ettercss-" | grep -v grep', { stdio: 'pipe' })
+    return execSync('ps -eo pid,ppid,args | grep "user-data-dir=.*[c]sstruth-" | grep -v grep', { stdio: 'pipe' })
       .toString().trim()
   } catch { return '' }
 }
@@ -120,7 +120,7 @@ test('check tool with viewports checks each viewport and prefixes violations wit
 }, 60_000)
 
 test('snapshot/diff tools with viewports round-trip per-viewport snapshots', async () => {
-  const dir = tmpDir('bettercss-mcp-test-')
+  const dir = tmpDir('csstruth-mcp-test-')
   await client.callTool({
     name: 'snapshot',
     arguments: { url: `${srv.url}/responsive/index.html`, viewports: '1280x800,600x800', name: 'resp', dir },
@@ -186,14 +186,14 @@ test('layout tool rejects settled+atTime before ever loading the page (cheap pre
 })
 
 test('snapshot/diff tools with settled round-trip a clean diff on the animated fixture', async () => {
-  const dir = tmpDir('bettercss-mcp-settled-test-')
+  const dir = tmpDir('csstruth-mcp-settled-test-')
   await client.callTool({ name: 'snapshot', arguments: { url: `${srv.url}/animated/index.html`, name: 'anim', dir, settled: true } })
   const res = await client.callTool({ name: 'diff', arguments: { url: `${srv.url}/animated/index.html`, name: 'anim', dir, settled: true } })
   expect((res.content as any)[0].text).toContain('(no layout changes)')
 })
 
 test('verify tool with name diffs the resting layout and notes a missing per-viewport snapshot', async () => {
-  const dir = tmpDir('bettercss-verify-mcp-test-')
+  const dir = tmpDir('csstruth-verify-mcp-test-')
   await client.callTool({
     name: 'snapshot',
     arguments: { url: `${srv.url}/responsive/index.html`, viewports: '1280x800', name: 'v', dir },
@@ -273,5 +273,5 @@ test('shuts down its headless Chrome subprocess when the MCP session closes', as
   while (chromeLeaked() && Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 250))
   }
-  expect(leakedProcesses(), 'processes still matching bettercss-').toBe('')
+  expect(leakedProcesses(), 'processes still matching csstruth-').toBe('')
 }, 60_000)

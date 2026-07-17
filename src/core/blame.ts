@@ -61,7 +61,7 @@ function removeWorktree(repoRoot: string, path: string): void {
 
 interface CheckResult { violations: Violation[]; tree: string; misses: string[] }
 
-// Serves `dir` and runs the same check the rest of bettercss runs, scoped to one page and
+// Serves `dir` and runs the same check the rest of csstruth runs, scoped to one page and
 // (if given) filtered to a selector's subtree — same substring convention fix.ts's
 // --selector uses, so a page:selector pair means the same thing across both commands.
 async function checkAt(dir: string, page: string, selector: string | undefined, viewport: { width: number; height: number } | undefined, port: number | undefined): Promise<CheckResult> {
@@ -125,7 +125,7 @@ export async function blame(root: string, page: string, opts: BlameOpts): Promis
   const badKeys = keysOf(current.violations)
 
   const commits = ancestors(repoRoot, maxCommits, hasUncommitted)
-  const scratch = mkdtempSync(join(tmpdir(), 'bettercss-blame-'))
+  const scratch = mkdtempSync(join(tmpdir(), 'csstruth-blame-'))
 
   // SIGINT mid-walk: clean up synchronously (worktree + scratch), then either defer to
   // another SIGINT listener (the MCP server's graceful shutdown — it kills Chrome and

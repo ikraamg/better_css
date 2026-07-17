@@ -31,7 +31,7 @@ async function serve(dir: string): Promise<Awaited<ReturnType<typeof serveFixtur
 }
 
 function tempFixture(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'bettercss-watch-'))
+  const dir = mkdtempSync(join(tmpdir(), 'csstruth-watch-'))
   dirs.push(dir)
   return dir
 }

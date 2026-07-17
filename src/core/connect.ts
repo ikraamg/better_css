@@ -13,7 +13,7 @@ const CHROME_PATHS = [
   '/usr/bin/chromium-browser',
 ].filter(Boolean) as string[]
 
-const HELP = `Cannot reach Chrome. Either let bettercss launch headless Chrome (install Chrome), or start yours with:
+const HELP = `Cannot reach Chrome. Either let csstruth launch headless Chrome (install Chrome), or start yours with:
   open -a "Google Chrome" --args --remote-debugging-port=9222   (macOS)
   google-chrome --remote-debugging-port=9222                    (Linux)`
 
@@ -42,7 +42,7 @@ async function launchChrome(): Promise<number> {
   sweepAbandonedProfiles()
   const bin = CHROME_PATHS.find((p) => existsSync(p))
   if (!bin) throw new Error(HELP)
-  const dir = mkdtempSync(join(tmpdir(), 'bettercss-'))
+  const dir = mkdtempSync(join(tmpdir(), 'csstruth-'))
   const proc = spawn(bin, [
     '--headless=new', '--remote-debugging-port=0', '--no-first-run',
     // crashpad_handler is designed to outlive Chrome and would leak past
@@ -222,8 +222,8 @@ export function shutdownChrome(opts: { terminal?: boolean } = {}): Promise<void>
 }
 
 // Pure parse of `ps -eo pid=,args=` output → pids of processes referencing OUR profile
-// dir exactly (delimited by whitespace or end-of-line, so /tmp/bettercss-AAA never
-// matches a /tmp/bettercss-AAAB line). Exported as the unit-test seam for doShutdown's
+// dir exactly (delimited by whitespace or end-of-line, so /tmp/csstruth-AAA never
+// matches a /tmp/csstruth-AAAB line). Exported as the unit-test seam for doShutdown's
 // straggler sweep — the zygote race itself only reproduces on multi-core Linux CI.
 export function stragglerPids(psOutput: string, dir: string): number[] {
   const ref = `--user-data-dir=${dir}`
@@ -236,7 +236,7 @@ export function stragglerPids(psOutput: string, dir: string): number[] {
 // Pure filter seam for sweepAbandonedProfiles: ps lines whose --user-data-dir starts
 // with OUR naming prefix AND whose profile dir no longer exists per `exists` (shutdown
 // rm'd it → provably abandoned). A dir still on disk could be a live concurrent
-// bettercss — never touched. Injected `exists` keeps this unit-testable.
+// csstruth — never touched. Injected `exists` keeps this unit-testable.
 export function abandonedProfilePids(psOutput: string, prefix: string, exists: (dir: string) => boolean): number[] {
   return psOutput.split('\n').flatMap((l) => {
     const dir = l.match(/--user-data-dir=(\S+)/)?.[1]
@@ -246,7 +246,7 @@ export function abandonedProfilePids(psOutput: string, prefix: string, exists: (
   })
 }
 
-// Cross-invocation self-healing: SIGKILL processes still carrying a bettercss profile
+// Cross-invocation self-healing: SIGKILL processes still carrying a csstruth profile
 // dir that no longer exists on disk. Run at every launchChrome (before spawning) and in
 // doShutdown's final phase. Rationale: CI telemetry proved the in-process shutdown can
 // reach "final: 0 pids remain" and STILL leak — on a loaded runner a renderer forked at
@@ -255,19 +255,19 @@ export function abandonedProfilePids(psOutput: string, prefix: string, exists: (
 export function sweepAbandonedProfiles(): number {
   try {
     const psOut = execSync('ps -eo pid=,args=', { stdio: 'pipe' }).toString()
-    const pids = abandonedProfilePids(psOut, join(tmpdir(), 'bettercss-'), existsSync)
+    const pids = abandonedProfilePids(psOut, join(tmpdir(), 'csstruth-'), existsSync)
     for (const pid of pids) { try { process.kill(pid, 'SIGKILL') } catch {} }
     if (pids.length) debugShutdown(`abandoned-profile sweep: reaped ${pids.length} pids`)
     return pids.length
   } catch { return 0 }
 }
 
-// Env-gated shutdown telemetry (BETTERCSS_DEBUG_SHUTDOWN=1): one stderr line per phase,
+// Env-gated shutdown telemetry (CSSTRUTH_DEBUG_SHUTDOWN=1): one stderr line per phase,
 // so a CI-only leak arrives self-explaining (the blame SIGINT test captures its child's
 // stderr into the failure message; CI's workflow sets the env for every suite shutdown).
 // Quiet for real users.
 function debugShutdown(msg: string): void {
-  if (process.env.BETTERCSS_DEBUG_SHUTDOWN === '1') process.stderr.write(`[bettercss shutdown] ${msg}\n`)
+  if (process.env.CSSTRUTH_DEBUG_SHUTDOWN === '1') process.stderr.write(`[csstruth shutdown] ${msg}\n`)
 }
 
 // `--type=renderer` etc. summarized for telemetry; the main browser process has no --type.

@@ -75,7 +75,7 @@ test('dry-run prints a patch per fixable violation with correct file:line and wr
 
 // (b) apply on a temp copy fixes text-clip
 test('apply on a temp copy fixes text-clip: re-check shows it gone, css contains the ellipsis', async () => {
-  const workDir = tmpDir('bettercss-fix-apply-')
+  const workDir = tmpDir('csstruth-fix-apply-')
   cpSync('fixtures/fixable', join(workDir, 'fixable'), { recursive: true })
   const tmpSrv = await serveFixtures(workDir)
   try {
@@ -103,11 +103,11 @@ test('apply on a temp copy fixes text-clip: re-check shows it gone, css contains
 // separately mutated copy isolates the guard from Chrome's own live source-text refetching,
 // which (verified empirically) reflects the SERVED bytes, not a frozen-at-parse-time snapshot.
 test('stale-source guard refuses a drifted patch only; other patches in the same file still apply', async () => {
-  const served = tmpDir('bettercss-fix-stale-served-')
+  const served = tmpDir('csstruth-fix-stale-served-')
   cpSync('fixtures/fixable', join(served, 'fixable'), { recursive: true })
   const tmpSrv = await serveFixtures(served)
 
-  const root = tmpDir('bettercss-fix-stale-root-')
+  const root = tmpDir('csstruth-fix-stale-root-')
   cpSync('fixtures/fixable', join(root, 'fixable'), { recursive: true })
   const rootCssPath = join(root, 'fixable/styles.css')
   // drift ONLY the .clipper rule's overflow value in the --root copy; .tiny-link and
@@ -148,7 +148,7 @@ test('stale-source guard refuses a drifted patch only; other patches in the same
 // actual write (an editor, a watcher, another long-lived MCP call) — applyFixes must re-check
 // the target line right before writing it, not trust the line buildFixes saw minutes earlier.
 test('applyFixes skips a patch whose line changed on disk since buildFixes scanned it, leaving the newer content intact', async () => {
-  const workDir = tmpDir('bettercss-fix-race-')
+  const workDir = tmpDir('csstruth-fix-race-')
   cpSync('fixtures/fixable', join(workDir, 'fixable'), { recursive: true })
   const tmpSrv = await serveFixtures(workDir)
   try {
@@ -184,7 +184,7 @@ test('applyFixes skips a patch whose line changed on disk since buildFixes scann
 
 // (e) px-width bleed patch: max-width:100% + comment, after-check improves
 test('a fixed px-width parent-bleed patches to max-width:100% with the original kept as a comment', async () => {
-  const workDir = tmpDir('bettercss-fix-bleed-')
+  const workDir = tmpDir('csstruth-fix-bleed-')
   cpSync('fixtures/fixable', join(workDir, 'fixable'), { recursive: true })
   const tmpSrv = await serveFixtures(workDir)
   try {
@@ -233,7 +233,7 @@ test('a source-mapped suspect resolves and patches the ORIGINAL source file, not
   expect(patch.line).toBe(3) // the `overflow: hidden;` line in the hand-authored (unminified) source
   expect(patch.after).toContain('text-overflow: ellipsis')
 
-  const workDir = tmpDir('bettercss-fix-mapped-')
+  const workDir = tmpDir('csstruth-fix-mapped-')
   cpSync('fixtures/fixable-mapped', join(workDir, 'fixable-mapped'), { recursive: true })
   const tmpSrv = await serveFixtures(workDir)
   try {
@@ -255,12 +255,12 @@ test('a source-mapped suspect resolves and patches the ORIGINAL source file, not
 // Safety bar: lexical containment isn't containment — a symlink INSIDE root pointing outside
 // passes a startsWith check while the write physically lands outside. Real paths must be checked.
 test('a symlink inside --root pointing outside is refused; the outside file is never written', async () => {
-  const outside = tmpDir('bettercss-fix-outside-')
+  const outside = tmpDir('csstruth-fix-outside-')
   cpSync('fixtures/fixable', join(outside, 'fixable'), { recursive: true })
   const outsideCss = join(outside, 'fixable/styles.css')
   const before = readFileSync(outsideCss, 'utf8')
 
-  const root = tmpDir('bettercss-fix-symroot-')
+  const root = tmpDir('csstruth-fix-symroot-')
   symlinkSync(join(outside, 'fixable'), join(root, 'fixable'))
 
   const tmpSrv = await serveFixtures(outside)
@@ -285,7 +285,7 @@ test('a symlink inside --root pointing outside is refused; the outside file is n
 // decoy rule (.real-clip-outer) stand in for the drifted suspect (.real-clip) — silently
 // patching the WRONG rule and masking the drift.
 test('stale guard: a prefix-named decoy rule is never patched in place of the drifted suspect', async () => {
-  const served = tmpDir('bettercss-fix-decoy-served-')
+  const served = tmpDir('csstruth-fix-decoy-served-')
   writeFileSync(join(served, 'index.html'),
     '<!doctype html><html><head><link rel="stylesheet" href="styles.css"></head><body><div class="real-clip">This text is definitely longer than 120 pixels of monospace</div></body></html>')
   const cleanCss = '* { margin: 0; font-family: monospace; }\n.real-clip { width: 120px; overflow: hidden; white-space: nowrap; }\n.real-clip-outer { width: 300px; overflow: hidden; }\n'
@@ -293,7 +293,7 @@ test('stale guard: a prefix-named decoy rule is never patched in place of the dr
 
   // --root copy: the suspect's own declaration drifted; the decoy (within ±3 lines, same
   // declaration text, prefix-sharing selector) is intact
-  const root = tmpDir('bettercss-fix-decoy-root-')
+  const root = tmpDir('csstruth-fix-decoy-root-')
   const driftedCss = cleanCss.replace('.real-clip { width: 120px; overflow: hidden;', '.real-clip { width: 120px; overflow: scroll;')
   writeFileSync(join(root, 'styles.css'), driftedCss)
 
@@ -317,7 +317,7 @@ test('stale guard: a prefix-named decoy rule is never patched in place of the dr
 
 // Safety bar: writes must never escape --root, however a stylesheet/source-map URL is crafted.
 test('resolveSuspectFile never resolves outside root, even under an adversarial relative reference', () => {
-  const root = tmpDir('bettercss-fix-root-')
+  const root = tmpDir('csstruth-fix-root-')
   const rootAbs = resolve(root)
 
   // many levels of '..' from deep inside the sheet's URL path

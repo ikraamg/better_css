@@ -7,14 +7,14 @@ export interface DiffEntry {
   detail: string
 }
 
-export function saveSnapshot(text: string, name: string, dir = '.bettercss'): string {
+export function saveSnapshot(text: string, name: string, dir = '.csstruth'): string {
   mkdirSync(dir, { recursive: true })
   const path = join(dir, `${name}.tree`)
   writeFileSync(path, text)
   return path
 }
 
-export function loadSnapshot(name: string, dir = '.bettercss'): string {
+export function loadSnapshot(name: string, dir = '.csstruth'): string {
   const path = join(dir, `${name}.tree`)
   try {
     return readFileSync(path, 'utf8')

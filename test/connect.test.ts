@@ -25,7 +25,7 @@ test('viewport defaults to 1280x800', async () => {
 
 test('concurrent withPage calls launch at most one Chrome', async () => {
   await shutdownChrome() // fresh state so both calls race the launch path
-  const dirs = () => readdirSync(tmpdir()).filter((d) => d.startsWith('bettercss-')).length
+  const dirs = () => readdirSync(tmpdir()).filter((d) => d.startsWith('csstruth-')).length
   const before = dirs()
   const [a, b] = await Promise.all([
     withPage(`${srv.url}/basic/index.html`, async (c) =>
@@ -56,33 +56,33 @@ test('navigating to a dead server rejects instead of reporting the neterror page
 // This pins the targeting: only OUR profile dir's processes, exact-delimited.
 test('stragglerPids targets only processes referencing our exact profile dir', () => {
   const ps = [
-    '  123 /opt/chrome/chrome --headless=new --user-data-dir=/tmp/bettercss-AAA',
-    '  456 /opt/chrome/chrome --type=renderer --user-data-dir=/tmp/bettercss-AAA --seatbelt=7',
-    '  789 /opt/chrome/chrome --headless=new --user-data-dir=/tmp/bettercss-AAAB', // different dir, shared prefix
+    '  123 /opt/chrome/chrome --headless=new --user-data-dir=/tmp/csstruth-AAA',
+    '  456 /opt/chrome/chrome --type=renderer --user-data-dir=/tmp/csstruth-AAA --seatbelt=7',
+    '  789 /opt/chrome/chrome --headless=new --user-data-dir=/tmp/csstruth-AAAB', // different dir, shared prefix
     '  321 /opt/chrome/chrome --user-data-dir=/tmp/other-profile',
-    'garbage line with no pid --user-data-dir=/tmp/bettercss-AAA', // NaN pid dropped
+    'garbage line with no pid --user-data-dir=/tmp/csstruth-AAA', // NaN pid dropped
     '',
   ].join('\n')
-  expect(stragglerPids(ps, '/tmp/bettercss-AAA')).toEqual([123, 456])
-  expect(stragglerPids(ps, '/tmp/bettercss-AAAB')).toEqual([789])
-  expect(stragglerPids('', '/tmp/bettercss-AAA')).toEqual([])
+  expect(stragglerPids(ps, '/tmp/csstruth-AAA')).toEqual([123, 456])
+  expect(stragglerPids(ps, '/tmp/csstruth-AAAB')).toEqual([789])
+  expect(stragglerPids('', '/tmp/csstruth-AAA')).toEqual([])
 })
 
 // Seam for the cross-invocation startup sweep: only processes carrying OUR naming
 // prefix whose profile dir is GONE from disk are abandoned. A dir still on disk could
-// be a live concurrent bettercss — never touched.
-test('abandonedProfilePids targets only bettercss profiles whose dir no longer exists', () => {
+// be a live concurrent csstruth — never touched.
+test('abandonedProfilePids targets only csstruth profiles whose dir no longer exists', () => {
   const ps = [
-    '  111 /opt/chrome/chrome --headless=new --user-data-dir=/tmp/bettercss-GONE1',
-    '  222 /opt/chrome/chrome --type=renderer --user-data-dir=/tmp/bettercss-LIVE --x=1',
-    '  333 /opt/chrome/chrome --type=renderer --user-data-dir=/tmp/bettercss-GONE2 --x=2',
+    '  111 /opt/chrome/chrome --headless=new --user-data-dir=/tmp/csstruth-GONE1',
+    '  222 /opt/chrome/chrome --type=renderer --user-data-dir=/tmp/csstruth-LIVE --x=1',
+    '  333 /opt/chrome/chrome --type=renderer --user-data-dir=/tmp/csstruth-GONE2 --x=2',
     '  444 /opt/chrome/chrome --user-data-dir=/tmp/other-tool-profile', // not our prefix
     '  555 /opt/chrome/chrome --no-user-data-dir-at-all',
-    'junk --user-data-dir=/tmp/bettercss-GONE1', // NaN pid dropped
+    'junk --user-data-dir=/tmp/csstruth-GONE1', // NaN pid dropped
   ].join('\n')
-  const exists = (dir: string) => dir === '/tmp/bettercss-LIVE'
-  expect(abandonedProfilePids(ps, '/tmp/bettercss-', exists)).toEqual([111, 333])
-  expect(abandonedProfilePids(ps, '/tmp/bettercss-', () => true)).toEqual([]) // all dirs live -> touch nothing
+  const exists = (dir: string) => dir === '/tmp/csstruth-LIVE'
+  expect(abandonedProfilePids(ps, '/tmp/csstruth-', exists)).toEqual([111, 333])
+  expect(abandonedProfilePids(ps, '/tmp/csstruth-', () => true)).toEqual([]) // all dirs live -> touch nothing
 })
 
 // MUST BE LAST in this file: the terminal latch is process-permanent by design (a

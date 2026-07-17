@@ -1,25 +1,25 @@
 ---
-name: bettercss
-description: Ground-truth CSS/layout workflow using the bettercss MCP tools (mcp__bettercss__*) or CLI. Use whenever working on CSS, layout, styling, responsive design, or visual bugs in a web project with a reachable page (dev server or file over HTTP) — diagnosing why an element renders wrong, making CSS changes safely, or verifying frontend work before calling it done. Triggers: "fix this layout", "why is this element X wide", "the sidebar/nav/card looks wrong", "make it responsive", editing any .css/.scss/tailwind classes, or declaring CSS work complete.
+name: csstruth
+description: Ground-truth CSS/layout workflow using the csstruth MCP tools (mcp__csstruth__*) or CLI. Use whenever working on CSS, layout, styling, responsive design, or visual bugs in a web project with a reachable page (dev server or file over HTTP) — diagnosing why an element renders wrong, making CSS changes safely, or verifying frontend work before calling it done. Triggers: "fix this layout", "why is this element X wide", "the sidebar/nav/card looks wrong", "make it responsive", editing any .css/.scss/tailwind classes, or declaring CSS work complete.
 ---
 
-# bettercss: CSS ground truth for agents
+# csstruth: CSS ground truth for agents
 
-bettercss extracts the browser's ACTUAL rendered layout as deterministic text.
+csstruth extracts the browser's ACTUAL rendered layout as deterministic text.
 Eight tools — six inspectors, one composite verdict (`verify`), one load-time
-stability report (`stability`) — as MCP tools (`mcp__bettercss__*`) or the
-`bettercss` CLI.
+stability report (`stability`) — as MCP tools (`mcp__csstruth__*`) or the
+`csstruth` CLI.
 
 ## The one hard rule
 
-Never claim anything about what renders without reading it from bettercss.
+Never claim anything about what renders without reading it from csstruth.
 No guessing from source, no "this should now be centered". Diagnose with the
 tool, edit the source, re-verify with the tool.
 
 ## Workflow
 
 **1. Before touching any CSS on a working page — lock the good state:**
-`snapshot` with a `name` and an ABSOLUTE `dir` (e.g. `<project>/.bettercss`).
+`snapshot` with a `name` and an ABSOLUTE `dir` (e.g. `<project>/.csstruth`).
 Relative dirs resolve against the MCP server's cwd, not the project. For
 responsive work snapshot with `viewports` so diffs exist per breakpoint.
 
@@ -38,7 +38,7 @@ resizes in px. `(no layout changes)` + your intended change = success. Unrelated
 movement = your edit had side effects; explain them before proceeding.
 
 **Editing for a while? Start `watch` instead of re-running `diff`.** CLI only
-(`bettercss watch <url>`, no MCP tool — a streaming daemon doesn't fit
+(`csstruth watch <url>`, no MCP tool — a streaming daemon doesn't fit
 request/response): start it once in a background shell, then read its stream
 as you edit instead of re-running `diff`/`check` after every change. It
 prints the layout delta and any NEW/RESOLVED violations under a `[HH:MM:SS]`
@@ -79,7 +79,7 @@ frame isn't a reproducible baseline).
 visible parent bleed, clipped text, un-layered overlap, zero-size/tiny tap
 targets — each with exact px and a `suspect: <rule> @ file:line`. For a
 genuinely intentional pattern (animated counters, marquees), add
-`data-bettercss-ignore` to that element rather than arguing with the check.
+`data-csstruth-ignore` to that element rather than arguing with the check.
 
 ## Chrome
 

@@ -16,7 +16,7 @@ import { applyFixes, buildFixes, renderFixes } from './core/fix.js'
 import { blame } from './core/blame.js'
 import { watch } from './core/watch.js'
 
-const USAGE = `bettercss <command> <url> [options]
+const USAGE = `csstruth <command> <url> [options]
   layout    <url> [--selector S] [--depth N]   print the LayoutTree (budgeted to 400 lines unless --depth is given)
   inspect   <url> --selector S                 deep-dive one element
   explain   <url> --selector S --property P    trace a property to its source rule

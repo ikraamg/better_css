@@ -18,7 +18,7 @@ import { measureStability, renderStability } from './core/stability.js'
 import { applyFixes, buildFixes, renderFixes } from './core/fix.js'
 import { blame } from './core/blame.js'
 
-const server = new McpServer({ name: 'bettercss', version: '0.1.0' })
+const server = new McpServer({ name: 'csstruth', version: '0.1.0' })
 
 const text = (s: string) => ({ content: [{ type: 'text' as const, text: s }] })
 const url = z.string().describe('Page URL (usually your dev server)')
@@ -171,7 +171,7 @@ server.tool('fix', 'Propose (default) or APPLY mechanical patches for fixable vi
 
 server.tool('snapshot', 'Lock the current layout as a named .tree snapshot for later diffing. Do this when the page looks CORRECT. Pass settled (recommended for animated pages, for a deterministic snapshot). atTime is NOT supported here — a specific animation frame pinned by hand is not a reproducible baseline; use layout/check with atTime to inspect mid-animation states instead.',
   {
-    url, port, viewport, viewports, name: z.string(), dir: z.string().optional().describe("Snapshot dir (default .bettercss relative to the MCP server's working directory — pass an absolute path when the server isn't launched from your project root)"), settled,
+    url, port, viewport, viewports, name: z.string(), dir: z.string().optional().describe("Snapshot dir (default .csstruth relative to the MCP server's working directory — pass an absolute path when the server isn't launched from your project root)"), settled,
     hover: rejectedStr(STALE_STATE), focus: rejectedStr(STALE_STATE), active: rejectedStr(STALE_STATE),
     click: rejectedArr(STALE_STATE), scrollTo: rejectedStr(STALE_STATE), atTime: rejectedNum(NOT_A_SNAPSHOT),
   },
@@ -189,7 +189,7 @@ server.tool('snapshot', 'Lock the current layout as a named .tree snapshot for l
 
 server.tool('diff', 'Structural diff of the current layout vs a named snapshot: what moved/resized/appeared/disappeared, in px. Run after every CSS change to see its actual effect. Pass settled (recommended for animated pages, matching how the snapshot was likely taken). atTime is NOT supported here — a specific animation frame pinned by hand is not a reproducible baseline; use layout/check with atTime to inspect mid-animation states instead.',
   {
-    url, port, viewport, viewports, name: z.string(), dir: z.string().optional().describe("Snapshot dir (default .bettercss relative to the MCP server's working directory — pass an absolute path when the server isn't launched from your project root)"), settled,
+    url, port, viewport, viewports, name: z.string(), dir: z.string().optional().describe("Snapshot dir (default .csstruth relative to the MCP server's working directory — pass an absolute path when the server isn't launched from your project root)"), settled,
     hover: rejectedStr(STALE_STATE), focus: rejectedStr(STALE_STATE), active: rejectedStr(STALE_STATE),
     click: rejectedArr(STALE_STATE), scrollTo: rejectedStr(STALE_STATE), atTime: rejectedNum(NOT_A_SNAPSHOT),
   },
@@ -206,7 +206,7 @@ server.tool('diff', 'Structural diff of the current layout vs a named snapshot: 
   })
 
 server.tool('verify', `Composite one-shot "is this page correct": runs layout invariants and, if a name is given, also diffs a locked snapshot — across a viewport sweep, in a single call. FIRST line of the output is always VERDICT: PASS or VERDICT: FAIL (violations + layout changes), so you can branch on line 1 without parsing details. Defaults to the ${DEFAULT_SWEEP} sweep when viewports is omitted — verify always runs as a matrix, even with one viewport, so snapshot files are always named <name>@WxH (never plain <name>.tree). Pass scrollTo/click to interact with the page first (order: scrollTo, then click(s), then settle), then settled/atTime to fast-forward or seek animations, then hover/focus/active to see the layout consequences of interaction states without a mouse. settled is RECOMMENDED whenever the page has animations — the default behavior is unchanged (no seeking) otherwise. IMPORTANT: states, interact steps, and atTime affect the invariant check only — the snapshot diff always compares the resting (unforced, un-interacted, not-pinned-to-a-frame) layout, applying settled if given (since diffing a forced/interacted layout against a resting snapshot would always report a change); this costs a second page load per viewport when states/interact are combined with name. A missing per-viewport snapshot is reported as a note, not a failure (snapshot only the viewports you care about).`,
-  { url, port, viewports, hover, focus, active, click, scrollTo, settled, atTime, name: z.string().optional(), dir: z.string().optional().describe("Snapshot dir (default .bettercss relative to the MCP server's working directory — pass an absolute path when the server isn't launched from your project root)") },
+  { url, port, viewports, hover, focus, active, click, scrollTo, settled, atTime, name: z.string().optional(), dir: z.string().optional().describe("Snapshot dir (default .csstruth relative to the MCP server's working directory — pass an absolute path when the server isn't launched from your project root)") },
   ({ url: u, port: p, viewports: vs, hover: h, focus: fo, active: a, click: cl, scrollTo: st, settled: se, atTime: at, name, dir }) => {
     const hasStates = h !== undefined || fo !== undefined || a !== undefined
     const interact: InteractSteps = { click: cl, scrollTo: st }

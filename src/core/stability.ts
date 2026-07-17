@@ -34,10 +34,10 @@ const DEFAULT_THRESHOLD = 0.1
 // refs alive as ordinary strong references until collection reads them below — they don't
 // get detached since the fixture's shift only ever INSERTS content, never removes it.
 const INSTALL_SCRIPT = `(function () {
-  window.__bettercssShifts = [];
+  window.__csstruthShifts = [];
   try {
     var po = new PerformanceObserver(function (list) {
-      list.getEntries().forEach(function (entry) { window.__bettercssShifts.push(entry); });
+      list.getEntries().forEach(function (entry) { window.__csstruthShifts.push(entry); });
     });
     po.observe({ type: 'layout-shift', buffered: true });
   } catch (e) {}
@@ -55,7 +55,7 @@ const COLLECT_SCRIPT = `(function () {
     return el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') + cls.map(function (c) { return '.' + c }).join('')
   }
   var allSources = []
-  var shifts = (window.__bettercssShifts || []).map(function (entry) {
+  var shifts = (window.__csstruthShifts || []).map(function (entry) {
     var src = entry.sources && entry.sources[0]
     ;(entry.sources || []).forEach(function (s) { if (s.node) allSources.push(s.node) })
     return {

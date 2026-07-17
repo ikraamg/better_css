@@ -24,7 +24,7 @@ const repos: string[] = []
 afterAll(() => { for (const dir of repos) rmSync(dir, { recursive: true, force: true }) })
 
 function initRepo(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'bettercss-blame-repo-'))
+  const dir = mkdtempSync(join(tmpdir(), 'csstruth-blame-repo-'))
   repos.push(dir)
   git(dir, ['init', '-q'])
   // Local to the throwaway repo only — never touches the developer's global git config.
@@ -171,10 +171,10 @@ test('blame tool (MCP) mirrors the CLI: names the culprit commit', async () => {
 
 // --- interrupt / honesty hardening ---
 
-// blame's scratch checkout dirs (bettercss-blame-XXXXXX), NOT the throwaway test repos
-// (bettercss-blame-repo-XXXXXX) this file creates itself.
+// blame's scratch checkout dirs (csstruth-blame-XXXXXX), NOT the throwaway test repos
+// (csstruth-blame-repo-XXXXXX) this file creates itself.
 function scratchDirs(): Set<string> {
-  return new Set(readdirSync(tmpdir()).filter((d) => d.startsWith('bettercss-blame-') && !d.startsWith('bettercss-blame-repo-')))
+  return new Set(readdirSync(tmpdir()).filter((d) => d.startsWith('csstruth-blame-') && !d.startsWith('csstruth-blame-repo-')))
 }
 
 // SIGINT mid-walk (CLI): everything the walk created must be gone — no registered
@@ -185,10 +185,10 @@ test('SIGINT mid-walk cleans worktrees, scratch dir, and Chrome, exiting 130', a
   const scratchBefore = scratchDirs()
 
   // Single-process spawn (no npx→tsx chain) so the signal reaches the CLI itself.
-  // BETTERCSS_DEBUG_SHUTDOWN: the child's doShutdown narrates each phase to stderr, and
+  // CSSTRUTH_DEBUG_SHUTDOWN: the child's doShutdown narrates each phase to stderr, and
   // the leak assertion below includes that stderr — a CI-only failure arrives self-explaining.
   const child = spawn(process.execPath, ['--import', 'tsx', 'src/cli.ts', 'blame', '--root', dir, '--page', 'index.html'],
-    { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, BETTERCSS_DEBUG_SHUTDOWN: '1' } })
+    { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, CSSTRUTH_DEBUG_SHUTDOWN: '1' } })
   let stderr = ''
   child.stderr.on('data', (d) => { stderr += d.toString() })
   // git prints "Preparing worktree" to stderr as each historical checkout starts —

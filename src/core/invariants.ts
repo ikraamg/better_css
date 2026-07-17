@@ -34,7 +34,7 @@ function buildCtx(tree: BuiltTree): Ctx {
   const svgDescendant = new WeakSet<LayoutNode>()
   const offscreenManaged = new WeakSet<LayoutNode>()
   walk(tree.root, (n, parent) => {
-    if ('data-bettercss-ignore' in n.attrs || (parent && ignoredSet.has(parent))) ignoredSet.add(n)
+    if ('data-csstruth-ignore' in n.attrs || (parent && ignoredSet.has(parent))) ignoredSet.add(n)
     if (parseFloat(n.styles['opacity'] ?? '1') <= 0 || (parent && opacityHidden.has(parent))) opacityHidden.add(n)
     if (parent && (parent.tag === 'svg' || svgDescendant.has(parent))) svgDescendant.add(n)
     if (parent) {

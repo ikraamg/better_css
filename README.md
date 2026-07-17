@@ -1,32 +1,32 @@
-# bettercss
+# csstruth
 
-[![test](https://github.com/ikraamg/better_css/actions/workflows/test.yml/badge.svg)](https://github.com/ikraamg/better_css/actions/workflows/test.yml)
+[![test](https://github.com/ikraamg/csstruth/actions/workflows/test.yml/badge.svg)](https://github.com/ikraamg/csstruth/actions/workflows/test.yml)
 
-**Hard ground truth for CSS.** bettercss extracts the browser's *actual*
+**Hard ground truth for CSS.** csstruth extracts the browser's *actual*
 rendered layout — positions, boxes, the cascade — as deterministic, diffable
 text, so coding agents (and humans) stop guessing what rendered.
 
 Backend code gets real feedback: tests fail, APIs return status codes,
 databases have state. CSS gets… pixels and vibes. Screenshot diffing is fuzzy
 and nondeterministic; poking DevTools by hand is slow and unrepeatable.
-bettercss gives layout the "backend treatment": structured truth you can
+csstruth gives layout the "backend treatment": structured truth you can
 assert against, byte-identical across runs, with every violation traced to the
 source rule that caused it.
 
 ```
-$ bettercss verify http://localhost:3000
+$ csstruth verify http://localhost:3000
 VERDICT: PASS
 checked 3 viewports: 375x800=clean, 768x800=clean, 1280x800=clean
 ```
 
 ```
-$ bettercss check http://localhost:3000 --hover .cta
+$ csstruth check http://localhost:3000 --hover .cta
 parent-bleed: a.cta bleeds 100px outside div.rail (child 400px wide, parent 300px)
   suspect: width: 400px @ main.css:4
 ```
 
 ```
-$ bettercss explain http://localhost:3000 --selector .sidebar --property width
+$ csstruth explain http://localhost:3000 --selector .sidebar --property width
 .sidebar width = 240px
   ✓ width: 300px   sidebar.css:1 (.sidebar (0,1,0)) — computed 240px differs from
       declared 300px — constrained by max-width: 240px @ main.css:1
@@ -39,7 +39,7 @@ Chromium's DevTools Protocol exposes everything DevTools itself knows: one bulk
 `DOMSnapshot` call returns the full DOM with layout boxes and computed styles;
 `CSS.getMatchedStylesForNode` returns the complete cascade for any element —
 every rule that matched, its specificity, and the stylesheet position it came
-from (source-mapped back through your build). bettercss packages that truth
+from (source-mapped back through your build). csstruth packages that truth
 into 11 composable CLI commands (10 of them also exposed as MCP tools —
 `watch` is CLI-only, a streaming daemon doesn't fit MCP's request/response
 shape) instead of megabytes of protocol JSON.
@@ -95,7 +95,7 @@ before forced states.
 **Violations are designed to be real bugs.** The invariants are tuned against
 real-world pages (intentional overlays, carousels, SVG internals, and
 scroll-managed content are exempt). For a genuinely intentional pattern, put
-`data-bettercss-ignore` on the element.
+`data-csstruth-ignore` on the element.
 
 **Safety (`fix`):** dry-run is the default — nothing is written unless you
 pass `--apply` (CLI) or `apply: true` (MCP), and `--root`/`root` is always
@@ -118,19 +118,19 @@ refused, naming the `page:line` to hand-edit instead.
 ## Install
 
 ```bash
-git clone https://github.com/ikraamg/better_css.git
-cd better_css
+git clone https://github.com/ikraamg/csstruth.git
+cd csstruth
 npm install && npm run build
 ```
 
-Requires Node ≥ 20 and Chrome/Chromium. bettercss attaches to a running Chrome
+Requires Node ≥ 20 and Chrome/Chromium. csstruth attaches to a running Chrome
 at port 9222 (`--remote-debugging-port=9222` — useful for logged-in pages),
 otherwise it launches its own headless instance.
 
 ## Use as an MCP server (the agent loop)
 
 ```bash
-claude mcp add --scope user bettercss -- node /path/to/better_css/dist/mcp.js
+claude mcp add --scope user csstruth -- node /path/to/csstruth/dist/mcp.js
 ```
 
 or per-project in `.mcp.json`:
@@ -138,7 +138,7 @@ or per-project in `.mcp.json`:
 ```json
 {
   "mcpServers": {
-    "bettercss": { "command": "node", "args": ["/path/to/better_css/dist/mcp.js"] }
+    "csstruth": { "command": "node", "args": ["/path/to/csstruth/dist/mcp.js"] }
   }
 }
 ```
@@ -146,21 +146,21 @@ or per-project in `.mcp.json`:
 The agent loop this enables: dev server renders → agent reads `layout` →
 edits CSS → `diff` shows the actual effect in px → `verify` gates "done".
 
-Note: `snapshot`/`diff` resolve a relative `dir` (default `.bettercss`) against
+Note: `snapshot`/`diff` resolve a relative `dir` (default `.csstruth`) against
 the MCP **server's** working directory. With a globally-registered server, pass
 an absolute `dir`.
 
 ## Use from the CLI (CI / scripts)
 
 ```bash
-bettercss verify  http://localhost:3000                  # the one-call gate, exit 1 on FAIL
-bettercss check   http://localhost:3000 --viewports 375x800,1280x800
-bettercss layout  http://localhost:3000 --selector main
-bettercss explain http://localhost:3000 --selector .sidebar --property width
-bettercss snapshot http://localhost:3000 --name home --dir .bettercss
-bettercss diff     http://localhost:3000 --name home --dir .bettercss
-bettercss blame    --root . --page index.html --selector .sidebar
-bettercss watch    http://localhost:3000
+csstruth verify  http://localhost:3000                  # the one-call gate, exit 1 on FAIL
+csstruth check   http://localhost:3000 --viewports 375x800,1280x800
+csstruth layout  http://localhost:3000 --selector main
+csstruth explain http://localhost:3000 --selector .sidebar --property width
+csstruth snapshot http://localhost:3000 --name home --dir .csstruth
+csstruth diff     http://localhost:3000 --name home --dir .csstruth
+csstruth blame    --root . --page index.html --selector .sidebar
+csstruth watch    http://localhost:3000
 ```
 
 `check`/`verify` exit 1 on violations — drop them straight into CI.
@@ -173,7 +173,7 @@ starting it in a background shell and reading the stream instead of
 re-running `diff`/`check` after every edit:
 
 ```bash
-bettercss watch http://localhost:3000 &   # or your shell/agent's background-job equivalent
+csstruth watch http://localhost:3000 &   # or your shell/agent's background-job equivalent
 ```
 
 Then read the shell's output as you edit — a quiet stream means nothing
@@ -183,12 +183,12 @@ the background job) when you're done; it shuts Chrome down cleanly on exit.
 
 ## Claude Code skill
 
-`skills/bettercss/SKILL.md` encodes the working doctrine (snapshot before
+`skills/csstruth/SKILL.md` encodes the working doctrine (snapshot before
 editing, `explain` before touching a cascade you didn't write, `diff` after
 every edit, `verify` before done). Install it user-wide:
 
 ```bash
-cp -r skills/bettercss ~/.claude/skills/
+cp -r skills/csstruth ~/.claude/skills/
 ```
 
 ## Development
@@ -200,7 +200,7 @@ npm run build       # emits dist/
 ```
 
 Every fixture in `fixtures/` is a page with a deliberately planted layout bug
-(or a deliberately clean control); the tests assert bettercss finds exactly
+(or a deliberately clean control); the tests assert csstruth finds exactly
 what was planted. The design docs and per-release plans live in
 `docs/superpowers/`.
 

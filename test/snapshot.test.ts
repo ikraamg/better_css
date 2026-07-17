@@ -23,7 +23,7 @@ const render = (path: string) =>
   withPage(`${srv.url}${path}`, async (c) => renderTree(buildTree(await extract(c))))
 
 test('save/load round-trips', async () => {
-  const dir = tmpDir('bettercss-test-')
+  const dir = tmpDir('csstruth-test-')
   const text = await render('/diff/before.html')
   const file = saveSnapshot(text, 'before', dir)
   expect(file).toBe(join(dir, 'before.tree'))
@@ -31,7 +31,7 @@ test('save/load round-trips', async () => {
 })
 
 test('missing snapshot errors with the resolved path', () => {
-  const dir = tmpDir('bettercss-test-')
+  const dir = tmpDir('csstruth-test-')
   expect(() => loadSnapshot('nope', dir))
     .toThrow(`No snapshot 'nope' at ${resolve(dir, 'nope.tree')} — check the dir option and the server's working directory`)
 })
