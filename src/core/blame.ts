@@ -186,7 +186,12 @@ export async function blame(root: string, page: string, opts: BlameOpts): Promis
       prevTree = result.tree
       prevViolations = result.violations
     }
-    return { output: `${prefix}still broken ${examined} commits back — raise --max-commits`, dirty: true }
+    // Reached the end of history (fewer commits exist than the cap), still bad the whole
+    // way — raising --max-commits wouldn't help, there's nothing further back to walk.
+    const verdict = commits.length < maxCommits
+      ? 'the page was never good in this history'
+      : `still broken ${examined} commits back — raise --max-commits`
+    return { output: `${prefix}${verdict}`, dirty: true }
   } finally {
     process.removeListener('SIGINT', onSigint)
     cleanupCheckouts()

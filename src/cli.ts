@@ -82,14 +82,21 @@ const USAGE = `bettercss <command> <url> [options]
                                                 violations introduced. Exit 1 when a culprit is
                                                 found; if every commit within the cap is still
                                                 bad, prints "still broken N commits back — raise
-                                                --max-commits" (also exit 1). The user's HEAD/
-                                                index/working tree are never touched — all
-                                                checkouts are detached worktrees in a scratch
-                                                temp dir, removed and pruned afterward.
+                                                --max-commits" (also exit 1) — unless the walk
+                                                reached the end of history first (fewer commits
+                                                exist than the cap), in which case it prints "the
+                                                page was never good in this history" instead
+                                                (raising --max-commits would find nothing further
+                                                back). The user's HEAD/index/working tree are
+                                                never touched — all checkouts are detached
+                                                worktrees in a scratch temp dir, removed and
+                                                pruned afterward.
   watch     <url> [--viewport WxH] [--interval MS]
                                                 live diff stream: holds one page open,
                                                 polling the settle-signature hash every
-                                                --interval ms (default 500). On start,
+                                                --interval ms (default 500, minimum 50 — a
+                                                smaller value outraces its own CDP round-trip
+                                                and exits 2). On start,
                                                 prints the initial check summary, then
                                                 "watching <url> (Ctrl+C to stop)". On a
                                                 detected change, waits for settle, then
@@ -215,6 +222,10 @@ async function main(): Promise<number> {
       console.error(`--max-commits must be a number, got '${f['max-commits']}'`)
       return 2
     }
+    if (f.port !== undefined && Number.isNaN(Number(f.port))) {
+      console.error(`--port must be a number, got '${f.port}'`)
+      return 2
+    }
     let viewport: { width: number; height: number } | undefined
     if (f.viewport !== undefined) {
       try { viewport = parseViewport(f.viewport) }
@@ -306,7 +317,16 @@ async function main(): Promise<number> {
       console.error(`--viewports is not valid for watch — it holds one page open; pass --viewport (singular).`)
       return 2
     }
-    return await watch(url, { port: opts.port, viewport, interval: f.interval ? Number(f.interval) : undefined })
+    // Below ~50ms the poll tick outraces its own CDP round-trip (readSignature + the
+    // reachable() fetch on every tick) — a busy-loop hammering the page instead of a
+    // watch interval. An explicit 0 is the sharpest case: `f.interval ? ... : undefined`
+    // would otherwise pass it through as a literal 0 (the string '0' is truthy), not the
+    // 500ms default.
+    if (f.interval !== undefined && Number(f.interval) < 50) {
+      console.error(`--interval must be >= 50 (ms), got '${f.interval}'`)
+      return 2
+    }
+    return await watch(url, { port: opts.port, viewport, interval: f.interval !== undefined ? Number(f.interval) : undefined })
   }
 
   if (cmd === 'fix') {

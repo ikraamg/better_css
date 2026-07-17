@@ -40,7 +40,9 @@ Chromium's DevTools Protocol exposes everything DevTools itself knows: one bulk
 `CSS.getMatchedStylesForNode` returns the complete cascade for any element —
 every rule that matched, its specificity, and the stylesheet position it came
 from (source-mapped back through your build). bettercss packages that truth
-into ten composable tools instead of megabytes of protocol JSON.
+into 11 composable CLI commands (10 of them also exposed as MCP tools —
+`watch` is CLI-only, a streaming daemon doesn't fit MCP's request/response
+shape) instead of megabytes of protocol JSON.
 
 The core representation is the **LayoutTree**: one line per rendered element,
 deterministic (same render → byte-identical text), with warnings inline:

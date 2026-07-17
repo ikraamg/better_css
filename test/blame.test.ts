@@ -97,6 +97,31 @@ test('blame within an exhausted --max-commits reports "still broken N commits ba
   expect(err.stdout.trim()).toBe('still broken 2 commits back — raise --max-commits')
 }, 90_000)
 
+// (c2) when the walk reaches the END of history (fewer commits exist than the cap) and
+// EVERY one is still bad, raising --max-commits can't help — there's no more history to
+// walk — so the message must say so instead of suggesting a cap raise that would do nothing.
+test('blame that walks its entire (short) history and finds it always broken says so, not "raise --max-commits"', async () => {
+  const dir = initRepo()
+  const ALLBAD_1 = '* { margin: 0; padding: 0; } .wrap { width: 200px; height: 100px; } .box { width: 400px; height: 50px; }\n'
+  const ALLBAD_2 = '* { margin: 0; padding: 0; } .wrap { width: 200px; height: 100px; background: #eee; } .box { width: 400px; height: 50px; }\n'
+  writeAndCommit(dir, { 'index.html': HTML, 'styles.css': ALLBAD_1 }, 'initial (already broken)')
+  writeAndCommit(dir, { 'styles.css': ALLBAD_2 }, 'unrelated tweak')
+  // default --max-commits (25) is well beyond this repo's 2-commit history
+  const err = await cli('blame', '--root', dir, '--page', 'index.html').catch((e) => e)
+  expect(err.code).toBe(1)
+  expect(err.stdout.trim()).toBe('the page was never good in this history')
+}, 90_000)
+
+// plumbing: blame's --root/--page branch runs before the generic numeric-flag validation
+// every other command gets — --port must be checked there too, same as --max-commits.
+test('blame rejects a non-numeric --port with exit 2, no Chrome touched', async () => {
+  const dir = initRepo()
+  writeAndCommit(dir, { 'index.html': HTML, 'styles.css': GOOD_CSS }, 'add page')
+  const err = await cli('blame', '--root', dir, '--page', 'index.html', '--port', 'nope').catch((e) => e)
+  expect(err.code).toBe(2)
+  expect(err.stderr).toContain("--port must be a number, got 'nope'")
+}, 20_000)
+
 // (d) safety: the throwaway repo's HEAD, branch, index, and working tree are byte-identical
 // after a blame run, and no worktree is left registered.
 test('a blame run never touches the repo\'s HEAD, branch, index, or working tree, and leaves no worktree behind', async () => {

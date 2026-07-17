@@ -283,6 +283,16 @@ test('watch rejects --viewports, exiting 2 with no page opened', async () => {
   expect(err.stderr).toContain('--viewports is not valid for watch')
 }, 20_000)
 
+// plumbing: --interval too small (including an explicit 0, which the CLI's own
+// `f.interval ? Number(f.interval) : undefined` ternary would otherwise pass through as a
+// literal 0 — a busy-loop hammering the page on every tick) is rejected before any Chrome
+// is touched, not silently defaulted or honored.
+test.each(['0', '10', '49'])('watch rejects --interval %s (below the 50ms floor), exiting 2 with no page opened', async (interval) => {
+  const err = await cli('watch', 'http://127.0.0.1:1', '--interval', interval).catch((e) => e)
+  expect(err.code).toBe(2)
+  expect(err.stderr).toContain('--interval must be >= 50')
+}, 20_000)
+
 // quiet-when-idle: no output at all while nothing changes (no heartbeat spam).
 test('watch prints nothing beyond the startup lines while the page is idle', async () => {
   const dir = tempFixture()
