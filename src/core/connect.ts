@@ -229,6 +229,23 @@ export function stragglerPids(psOutput: string, dir: string): number[] {
     .filter((pid) => Number.isInteger(pid) && pid > 0)
 }
 
+// Env-gated shutdown telemetry (BETTERCSS_DEBUG_SHUTDOWN=1): one stderr line per phase,
+// so a CI-only leak arrives self-explaining (the blame SIGINT test captures its child's
+// stderr into the failure message; CI's workflow sets the env for every suite shutdown).
+// Quiet for real users.
+function debugShutdown(msg: string): void {
+  if (process.env.BETTERCSS_DEBUG_SHUTDOWN === '1') process.stderr.write(`[bettercss shutdown] ${msg}\n`)
+}
+
+// `--type=renderer` etc. summarized for telemetry; the main browser process has no --type.
+function processTypes(psOutput: string, dir: string): string {
+  const pids = new Set(stragglerPids(psOutput, dir))
+  return psOutput.split('\n')
+    .filter((l) => pids.has(Number(l.trim().split(/\s+/)[0])))
+    .map((l) => l.match(/--type=(\S+)/)?.[1] ?? 'browser')
+    .join(',')
+}
+
 async function doShutdown(): Promise<void> {
   // A signal can land while launchChrome is still in flight (watch's startup guard,
   // blame's mid-walk handler) — Chrome's process exists from the moment spawn()
@@ -239,29 +256,44 @@ async function doShutdown(): Promise<void> {
   if (!launched) return
   const { proc, dir } = launched
   launched = null
-  // Group-SIGKILL the whole Chrome tree at once. Nothing needs a graceful
-  // close — the profile dir is deleted below anyway — and shutdown must fit
-  // inside an MCP host's kill grace (the SDK SIGKILLs the server ~4s after
-  // stdio close; a slow graceful path orphaned renderers on Linux CI).
-  // Chrome is spawned detached (its own process group), so -pid takes
-  // browser + renderers + GPU together.
-  try { process.kill(-proc.pid!, 'SIGKILL') } catch { proc.kill('SIGKILL') }
-  if (proc.exitCode === null && proc.signalCode === null) {
-    await new Promise((r) => proc.once('exit', r))
+
+  const ps = (): string => {
+    try { return execSync('ps -eo pid=,args=', { stdio: 'pipe' }).toString() } catch { return '' }
   }
-  // On Linux, the sandbox/zygote places renderers OUTSIDE the main process group, so the
-  // group-SIGKILL above can miss them — one caught mid-spawn never detects the dead
-  // browser and idles forever (CI forensics: 2 renderers, spawned at the instant of the
-  // kill, survived a 15s poll). Sweep stragglers by our unique profile path; best-effort,
-  // never fatal. NOT --no-sandbox/--no-zygote: we render arbitrary URLs — keep the sandbox.
+  // Kill order matters (CI forensics: renderers spawned at the instant of a group-kill
+  // survived it — on Linux the sandbox/zygote places them OUTSIDE the main process
+  // group, and a renderer caught mid-spawn never notices the dead browser):
+  // (1) collect EVERY pid carrying our unique profile dir — zygote, renderers, gpu,
+  //     main — and SIGKILL them individually; killing the zygote first-class stops new
+  //     renderer forks at the source (a dead zygote can't fork);
+  // (2) group-SIGKILL as backstop for anything the ps snapshot missed;
+  // (3) re-sweep-poll until zero profile pids or a 2s deadline (late ps-visibility
+  //     under CI load is a candidate mechanism for the previous 450ms sweep missing).
+  // All best-effort, never fatal. NOT --no-sandbox/--no-zygote: we render arbitrary
+  // URLs — the sandbox stays.
   try {
-    const sweep = (): number => {
-      const pids = stragglerPids(execSync('ps -eo pid=,args=', { stdio: 'pipe' }).toString(), dir)
-      for (const pid of pids) { try { process.kill(pid, 'SIGKILL') } catch {} }
-      return pids.length
+    const first = ps()
+    const initial = stragglerPids(first, dir)
+    debugShutdown(`initial sweep: ${initial.length} pids [${processTypes(first, dir)}]`)
+    for (const pid of initial) { try { process.kill(pid, 'SIGKILL') } catch {} }
+    try { process.kill(-proc.pid!, 'SIGKILL'); debugShutdown('group-kill: ok') }
+    catch (err) { proc.kill('SIGKILL'); debugShutdown(`group-kill failed (${(err as Error).message}), single-kill sent`) }
+    if (proc.exitCode === null && proc.signalCode === null) {
+      await new Promise((r) => proc.once('exit', r))
     }
-    for (let i = 0; sweep() > 0 && i < 3; i++) await new Promise((r) => setTimeout(r, 150))
-  } catch {}
+    const deadline = Date.now() + 2000
+    let remaining: number[]
+    while ((remaining = stragglerPids(ps(), dir)).length > 0 && Date.now() < deadline) {
+      debugShutdown(`re-sweep: ${remaining.length} pids remain`)
+      for (const pid of remaining) { try { process.kill(pid, 'SIGKILL') } catch {} }
+      await new Promise((r) => setTimeout(r, 150))
+    }
+    debugShutdown(`final: ${remaining.length} pids remain`)
+  } catch (err) {
+    debugShutdown(`sweep error: ${(err as Error).message}`)
+    // ps unavailable or similar — fall back to what the old path always did
+    try { process.kill(-proc.pid!, 'SIGKILL') } catch { proc.kill('SIGKILL') }
+  }
   // Chrome's helper processes outlive the main process briefly and can still be
   // writing to the profile dir (ENOTEMPTY race, seen on Linux CI). Cleanup is
   // best-effort: retry twice, then leave it to the OS temp reaper — never fatal.

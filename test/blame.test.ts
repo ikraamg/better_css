@@ -185,7 +185,10 @@ test('SIGINT mid-walk cleans worktrees, scratch dir, and Chrome, exiting 130', a
   const scratchBefore = scratchDirs()
 
   // Single-process spawn (no npx→tsx chain) so the signal reaches the CLI itself.
-  const child = spawn(process.execPath, ['--import', 'tsx', 'src/cli.ts', 'blame', '--root', dir, '--page', 'index.html'], { stdio: ['ignore', 'pipe', 'pipe'] })
+  // BETTERCSS_DEBUG_SHUTDOWN: the child's doShutdown narrates each phase to stderr, and
+  // the leak assertion below includes that stderr — a CI-only failure arrives self-explaining.
+  const child = spawn(process.execPath, ['--import', 'tsx', 'src/cli.ts', 'blame', '--root', dir, '--page', 'index.html'],
+    { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, BETTERCSS_DEBUG_SHUTDOWN: '1' } })
   let stderr = ''
   child.stderr.on('data', (d) => { stderr += d.toString() })
   // git prints "Preparing worktree" to stderr as each historical checkout starts —
@@ -210,7 +213,8 @@ test('SIGINT mid-walk cleans worktrees, scratch dir, and Chrome, exiting 130', a
   while ([...chromePids()].some((p) => !pidsBefore.has(p)) && Date.now() < chromeDeadline) {
     await new Promise((r) => setTimeout(r, 250))
   }
-  expect(chromeProcessLines().filter((l) => !pidsBefore.has(l.split(/\s+/)[0]))).toEqual([])
+  const survivors = chromeProcessLines().filter((l) => !pidsBefore.has(l.split(/\s+/)[0]))
+  expect(survivors, `child stderr (shutdown telemetry):\n${stderr}`).toEqual([])
 }, 90_000)
 
 // SIGINT to the MCP server AFTER a blame call completed: blame's handler must be disarmed
