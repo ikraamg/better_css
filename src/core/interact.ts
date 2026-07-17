@@ -79,6 +79,19 @@ async function clickTarget(client: any, selector: string): Promise<void> {
 // play-pending across both sampled frames (identical rects) yet about to move.
 // Float accumulation is deterministic within a frame; the modulo keeps the magnitude
 // well under 2^53 so fractional pixels aren't lost.
+// Factored out (not inlined in SETTLE_EXPR) so watch.ts's change-detection poll can
+// evaluate the SAME hash directly (SIGNATURE_EXPR below) without paying for settle's
+// two-frame wait — it just wants "has anything moved since I last looked".
+const SIG_FN = `function () {
+  let h = 0
+  const els = document.querySelectorAll('*')
+  for (const el of els) {
+    const r = el.getBoundingClientRect()
+    h = (h % 0xffffff) * 31 + r.x + r.y * 3 + r.width * 7 + r.height * 13
+  }
+  return h + ':' + window.scrollY + ':' + els.length
+}`
+
 // Infinite-iteration animations (a.effect.getTiming().iterations === Infinity — a
 // perpetual spinner, say) are excluded from the live-animation check on purpose: they
 // never end, so counting them would burn every settle up to the cap regardless of
@@ -88,15 +101,7 @@ async function clickTarget(client: any, selector: string): Promise<void> {
 // infinite one via Animation.setPlaybackRate(0) (which does NOT remove it) — the filter
 // here is what lets the post-seek settle resolve instead of hanging on the frozen spinner.
 const SETTLE_EXPR = `new Promise((resolve) => {
-  const sig = () => {
-    let h = 0
-    const els = document.querySelectorAll('*')
-    for (const el of els) {
-      const r = el.getBoundingClientRect()
-      h = (h % 0xffffff) * 31 + r.x + r.y * 3 + r.width * 7 + r.height * 13
-    }
-    return h + ':' + window.scrollY + ':' + els.length
-  }
+  const sig = ${SIG_FN}
   const liveFinite = () => document.getAnimations().filter((a) => a.effect && a.effect.getTiming().iterations !== Infinity).length
   requestAnimationFrame(() => {
     const a = sig()
@@ -105,6 +110,11 @@ const SETTLE_EXPR = `new Promise((resolve) => {
     })
   })
 })`
+
+// Exported for watch.ts's poll: the raw signature, read synchronously (no settle wait,
+// no animation check) — a "has this changed since I last sampled" hash, not a
+// settled-or-not verdict.
+export const SIGNATURE_EXPR = `(${SIG_FN})()`
 
 const SETTLE_CAP_MS = 2000
 

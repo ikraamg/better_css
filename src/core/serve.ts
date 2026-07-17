@@ -31,5 +31,9 @@ export async function serveFixtures(root: string): Promise<{ url: string; close(
   })
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
   const { port } = server.address() as { port: number }
-  return { url: `http://127.0.0.1:${port}`, close: () => server.close(), misses }
+  // closeAllConnections: server.close() alone only stops accepting NEW connections —
+  // an existing keep-alive socket stays open and can still serve requests until it
+  // times out on its own, so a caller relying on close() to mean "gone now" (watch.ts's
+  // dev-server-death test) needs every open socket torn down immediately too.
+  return { url: `http://127.0.0.1:${port}`, close: () => { server.closeAllConnections(); server.close() }, misses }
 }

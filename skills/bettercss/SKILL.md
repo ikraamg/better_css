@@ -37,6 +37,14 @@ responsive work snapshot with `viewports` so diffs exist per breakpoint.
 resizes in px. `(no layout changes)` + your intended change = success. Unrelated
 movement = your edit had side effects; explain them before proceeding.
 
+**Editing for a while? Start `watch` instead of re-running `diff`.** CLI only
+(`bettercss watch <url>`, no MCP tool — a streaming daemon doesn't fit
+request/response): start it once in a background shell, then read its stream
+as you edit instead of re-running `diff`/`check` after every change. It
+prints the layout delta and any NEW/RESOLVED violations under a `[HH:MM:SS]`
+block on each real change, and stays quiet otherwise — no need to re-invoke a
+tool per edit. Stop it (Ctrl+C / kill the background job) when you're done.
+
 **4. Before declaring CSS work done — the gate:**
 `verify` (one call). Defaults to the 375x800/768x800/1280x800 sweep; pass
 `name`+`dir` to include snapshot diffs. First output line is `VERDICT: PASS`

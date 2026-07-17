@@ -14,6 +14,7 @@ import { animateNote, needsAnimationCapture, settleAnimations, type AnimateOpts 
 import { measureStability, renderStability } from './core/stability.js'
 import { applyFixes, buildFixes, renderFixes } from './core/fix.js'
 import { blame } from './core/blame.js'
+import { watch } from './core/watch.js'
 
 const USAGE = `bettercss <command> <url> [options]
   layout    <url> [--selector S] [--depth N]   print the LayoutTree (budgeted to 400 lines unless --depth is given)
@@ -85,6 +86,27 @@ const USAGE = `bettercss <command> <url> [options]
                                                 index/working tree are never touched — all
                                                 checkouts are detached worktrees in a scratch
                                                 temp dir, removed and pruned afterward.
+  watch     <url> [--viewport WxH] [--interval MS]
+                                                live diff stream: holds one page open,
+                                                polling the settle-signature hash every
+                                                --interval ms (default 500). On start,
+                                                prints the initial check summary, then
+                                                "watching <url> (Ctrl+C to stop)". On a
+                                                detected change, waits for settle, then
+                                                prints the layout delta and any NEW/
+                                                RESOLVED violations (deltas only) under a
+                                                wall-clock [HH:MM:SS] block — silent
+                                                otherwise (no heartbeat spam). A same-URL
+                                                full reload (HMR full-refresh) prints
+                                                "page reloaded" and continues; navigating
+                                                to a DIFFERENT url prints "navigated away
+                                                to <url> — stopping" and exits 1. If the
+                                                dev server dies, prints "page unreachable
+                                                — stopping" and exits 1 (no retry). SIGINT/
+                                                SIGTERM shut Chrome down cleanly, exit 0.
+                                                CLI only — no MCP tool (a streaming daemon
+                                                doesn't fit request/response); run it in a
+                                                background shell and read the stream.
   stability <url> [--duration MS] [--threshold SCORE] [--viewport WxH]
                                                 load-time layout-shift report (Cumulative Layout
                                                 Shift): waits --duration ms (default 3000) past
@@ -131,6 +153,7 @@ interface Flags {
   settled?: string; 'at-time'?: string
   root?: string; apply?: string
   page?: string; 'max-commits'?: string
+  interval?: string
 }
 
 // Repeated occurrences of these flags accumulate into an array instead of last-wins.
@@ -199,7 +222,7 @@ async function main(): Promise<number> {
   const url = process.argv[3]
   const f = flags(process.argv.slice(4))
   if (!cmd || !url) { console.error(USAGE); return 2 }
-  if (!['layout', 'inspect', 'explain', 'check', 'snapshot', 'diff', 'verify', 'stability', 'fix'].includes(cmd)) {
+  if (!['layout', 'inspect', 'explain', 'check', 'snapshot', 'diff', 'verify', 'stability', 'fix', 'watch'].includes(cmd)) {
     console.error(USAGE)
     return 2
   }
@@ -231,7 +254,7 @@ async function main(): Promise<number> {
       return 2
     }
   }
-  for (const name of ['depth', 'port', 'at-time', 'duration', 'threshold']) {
+  for (const name of ['depth', 'port', 'at-time', 'duration', 'threshold', 'interval']) {
     if (f[name] !== undefined && Number.isNaN(Number(f[name]))) {
       console.error(`--${name} must be a number, got '${f[name]}'`)
       return 2
@@ -265,6 +288,14 @@ async function main(): Promise<number> {
     return 2
   }
   const opts = { port: f.port ? Number(f.port) : undefined, viewport, captureAnimations: needsAnimationCapture(animate) }
+
+  if (cmd === 'watch') {
+    if (f.viewports !== undefined) {
+      console.error(`--viewports is not valid for watch — it holds one page open; pass --viewport (singular).`)
+      return 2
+    }
+    return await watch(url, { port: opts.port, viewport, interval: f.interval ? Number(f.interval) : undefined })
+  }
 
   if (cmd === 'fix') {
     const root = f.root!

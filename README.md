@@ -68,6 +68,7 @@ screenshot comparison.
 | `check` | Layout-bug scan: viewport overflow, visible parent bleed, clipped text, unintended overlap, zero-size/tiny tap targets — exact px + the suspect rule at `file:line`. |
 | `fix` | Propose (default) or **apply** mechanical patches for fixable violations (clipped text, tiny tap targets, a fixed px width bleeding/overflowing). DRY-RUN unless `--apply`; writes are confined to `--root` and guarded by a stale-source check. See **Safety** below. |
 | `blame` | **"Which commit broke this?"** — walks a git repo's history backwards (newest→oldest, capped at 25 commits by default) checking out each commit into a scratch `git worktree`, until it finds the first commit where the current violation is gone. Names the culprit (`file:line`-style: sha, subject, date, author) plus the layout delta and violations it introduced. STATIC roots only in v1 (no dev-server/build step per checkout); the user's HEAD/index/working tree are never touched. |
+| `watch` | **Live diff stream while you edit.** Holds one page open, polling the layout signature every `--interval` ms (default 500); on a change, prints the layout delta and any NEW/RESOLVED violations under a `[HH:MM:SS]` block — silent otherwise. Survives an HMR full-refresh (`page reloaded`, same URL); stops if you navigate elsewhere or the dev server dies. Ctrl+C for a clean exit. CLI only — see **Use `watch` from a background shell** below. |
 | `layout` | The LayoutTree of the rendered page (scope with `selector`/`depth`; auto-budgeted on huge pages). |
 | `inspect` | One element in depth: box model, non-default styles, stacking context, why it has its width/height. |
 | `explain` | Trace any property to its source: which declaration wins (`file:line`, source-mapped), which lost and why, and what layout constraint overrides the declared value (flex-basis, min/max, grid). |
@@ -157,9 +158,26 @@ bettercss explain http://localhost:3000 --selector .sidebar --property width
 bettercss snapshot http://localhost:3000 --name home --dir .bettercss
 bettercss diff     http://localhost:3000 --name home --dir .bettercss
 bettercss blame    --root . --page index.html --selector .sidebar
+bettercss watch    http://localhost:3000
 ```
 
 `check`/`verify` exit 1 on violations — drop them straight into CI.
+
+### Use `watch` from a background shell (agents)
+
+`watch` is a long-lived streaming process, which doesn't fit MCP's
+request/response shape — it's CLI only. An agent (or a human) drives it by
+starting it in a background shell and reading the stream instead of
+re-running `diff`/`check` after every edit:
+
+```bash
+bettercss watch http://localhost:3000 &   # or your shell/agent's background-job equivalent
+```
+
+Then read the shell's output as you edit — a quiet stream means nothing
+changed; a block under a `[HH:MM:SS]` timestamp names exactly what moved and
+which violations appeared or resolved. Stop it with Ctrl+C (or a signal to
+the background job) when you're done; it shuts Chrome down cleanly on exit.
 
 ## Claude Code skill
 
