@@ -23,9 +23,18 @@
   "homepage": "https://github.com/ikraamg/csstruth#readme",
   "bugs": "https://github.com/ikraamg/csstruth/issues",
   "type": "module",
-  "engines": { "node": ">=20" },
-  "bin": { "csstruth": "./dist/cli.js" },
-  "files": ["dist", "skills", "README.md", "LICENSE"],
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "csstruth": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "skills",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "prepublishOnly": "npm run typecheck && npm run build",
     "build": "tsc",
