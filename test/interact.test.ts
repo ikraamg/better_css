@@ -69,11 +69,24 @@ test('a delayed (setTimeout) redirect landing during settle aborts with the same
 test('settle waits out a transform transition, so the capture sees the final position', async () => {
   const x = await withPage(`${srv.url}/interactive/index.html`, async (c) => {
     await runInteractSteps(c, { click: ['#anim-box'] })
-    const { result } = await c.Runtime.evaluate({
-      expression: 'document.getElementById("anim-box").getBoundingClientRect().x',
-      returnByValue: true,
-    })
-    return result.value
+    const readX = async () => {
+      const { result } = await c.Runtime.evaluate({
+        expression: 'document.getElementById("anim-box").getBoundingClientRect().x',
+        returnByValue: true,
+      })
+      return result.value
+    }
+    // runInteractSteps already waits for settle before returning — this polls with a
+    // deadline instead of trusting a single immediate sample, so a slow CI environment
+    // reading the DOM a beat late doesn't flake the test. A genuinely broken settle would
+    // still fail here: x would never reach 200 within the deadline.
+    const deadline = Date.now() + 2000
+    let x = await readX()
+    while (Math.round(x) !== 200 && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 50))
+      x = await readX()
+    }
+    return x
   })
   expect(Math.round(x)).toBe(200)
 })

@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from 'vitest'
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { serveFixtures } from './helpers/server.js'
@@ -11,11 +11,19 @@ import { saveSnapshot, loadSnapshot, diffTrees, renderDiff } from '../src/core/s
 const srv = await serveFixtures('fixtures')
 afterAll(async () => { srv.close(); await shutdownChrome() })
 
+const dirs: string[] = []
+afterAll(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }) })
+function tmpDir(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix))
+  dirs.push(dir)
+  return dir
+}
+
 const render = (path: string) =>
   withPage(`${srv.url}${path}`, async (c) => renderTree(buildTree(await extract(c))))
 
 test('save/load round-trips', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'bettercss-test-'))
+  const dir = tmpDir('bettercss-test-')
   const text = await render('/diff/before.html')
   const file = saveSnapshot(text, 'before', dir)
   expect(file).toBe(join(dir, 'before.tree'))
@@ -23,7 +31,7 @@ test('save/load round-trips', async () => {
 })
 
 test('missing snapshot errors with the resolved path', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'bettercss-test-'))
+  const dir = tmpDir('bettercss-test-')
   expect(() => loadSnapshot('nope', dir))
     .toThrow(`No snapshot 'nope' at ${resolve(dir, 'nope.tree')} — check the dir option and the server's working directory`)
 })

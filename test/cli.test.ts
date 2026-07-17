@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from 'vitest'
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
 import { promisify } from 'node:util'
-import { cpSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { chromePids, serveFixtures } from './helpers/server.js'
@@ -9,6 +9,14 @@ import { chromePids, serveFixtures } from './helpers/server.js'
 const run = promisify(execFile)
 const srv = await serveFixtures('fixtures')
 afterAll(() => srv.close())
+
+const dirs: string[] = []
+afterAll(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }) })
+function tmpDir(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix))
+  dirs.push(dir)
+  return dir
+}
 
 const cli = (...args: string[]) =>
   run('npx', ['tsx', 'src/cli.ts', ...args], { encoding: 'utf8' })
@@ -101,7 +109,7 @@ test('check --viewports + --hover forces the state inside each viewport (bleed a
 }, 60_000)
 
 test('snapshot --viewports + --hover still rejects (state forcing in the matrix is check-only)', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'bettercss-test-'))
+  const dir = tmpDir('bettercss-test-')
   const err = await cli('snapshot', `${srv.url}/hover/index.html`, '--viewports', '1280x800,600x800', '--name', 'x', '--dir', dir, '--hover', '.cta').catch((e) => e)
   expect(err.code).toBe(2)
   expect(err.stderr).toContain('--hover')
@@ -129,15 +137,15 @@ test('forced-hover layout is byte-identical across two invocations', async () =>
 }, 60_000)
 
 test('--hover is rejected for snapshot and diff (out of scope in v1)', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'bettercss-test-'))
+  const dir = tmpDir('bettercss-test-')
   const err = await cli('snapshot', `${srv.url}/hover/index.html`, '--name', 'x', '--dir', dir, '--hover', '.cta').catch((e) => e)
   expect(err.code).toBe(2)
   expect(err.stderr).toContain('--hover')
 }, 60_000)
 
 test('snapshot --viewports then diff --viewports round-trips clean, then shows a prefixed diff on change', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'bettercss-test-'))
-  const workDir = mkdtempSync(join(tmpdir(), 'bettercss-fixture-'))
+  const dir = tmpDir('bettercss-test-')
+  const workDir = tmpDir('bettercss-fixture-')
   cpSync('fixtures/responsive', workDir, { recursive: true })
 
   await cli('snapshot', `${srv.url}/responsive/index.html`, '--viewports', '1280x800,600x800', '--name', 'resp', '--dir', dir)
@@ -197,7 +205,7 @@ test('verify --hover --viewports checks each viewport with the state forced, FAI
 }, 60_000)
 
 test('verify --name diffs the resting layout against a per-viewport snapshot; missing snapshot is a note, not a failure', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'bettercss-verify-test-'))
+  const dir = tmpDir('bettercss-verify-test-')
   await cli('snapshot', `${srv.url}/responsive/index.html`, '--viewports', '1280x800', '--name', 'v', '--dir', dir)
 
   const { stdout: clean } = await cli('verify', `${srv.url}/responsive/index.html`, '--viewports', '1280x800', '--name', 'v', '--dir', dir)
@@ -263,7 +271,7 @@ test('a repeated --click does not disturb any other flag\'s last-wins behavior',
 }, 60_000)
 
 test('--click and --scroll-to are rejected for snapshot and diff (out of scope in v1)', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'bettercss-test-'))
+  const dir = tmpDir('bettercss-test-')
   const clickErr = await cli('snapshot', `${srv.url}/interactive/index.html`, '--name', 'x', '--dir', dir, '--click', '#menu-btn').catch((e) => e)
   expect(clickErr.code).toBe(2)
   expect(clickErr.stderr).toContain('--click')
@@ -314,14 +322,14 @@ test('a click that starts a transition longer than the settle cap, under --settl
 }, 60_000)
 
 test('snapshot --settled then diff --settled round-trips clean on the animated fixture', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'bettercss-settled-test-'))
+  const dir = tmpDir('bettercss-settled-test-')
   await cli('snapshot', `${srv.url}/animated/index.html`, '--name', 'anim', '--dir', dir, '--settled')
   const { stdout } = await cli('diff', `${srv.url}/animated/index.html`, '--name', 'anim', '--dir', dir, '--settled')
   expect(stdout).toContain('(no layout changes)')
 }, 60_000)
 
 test('--at-time is rejected for snapshot and diff (a specific animation frame is not a deterministic snapshot)', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'bettercss-test-'))
+  const dir = tmpDir('bettercss-test-')
   const snapErr = await cli('snapshot', `${srv.url}/animated/index.html`, '--name', 'x', '--dir', dir, '--at-time', '0').catch((e) => e)
   expect(snapErr.code).toBe(2)
   expect(snapErr.stderr).toContain('--at-time is not valid for snapshot')
@@ -419,7 +427,7 @@ test('fix dry-run (CLI) prints patches and never writes; deferring exact patch c
 }, 60_000)
 
 test('fix --apply on a temp copy writes patches, reports before/after honestly, and exits 0 on a clean improvement', async () => {
-  const workDir = mkdtempSync(join(tmpdir(), 'bettercss-cli-fix-'))
+  const workDir = tmpDir('bettercss-cli-fix-')
   cpSync('fixtures/fixable', join(workDir, 'fixable'), { recursive: true })
   const tmpSrv = await serveFixtures(workDir)
   try {
@@ -435,7 +443,7 @@ test('fix --apply on a temp copy writes patches, reports before/after honestly, 
 // The regressing fixture is built for exactly this: max-width: 100% cures the bleed but
 // shrinks the box below its text width, introducing a text-clip.
 test('fix --apply that introduces a NEW violation reports it and exits 1', async () => {
-  const workDir = mkdtempSync(join(tmpdir(), 'bettercss-cli-fix-regress-'))
+  const workDir = tmpDir('bettercss-cli-fix-regress-')
   cpSync('fixtures/regressing', join(workDir, 'regressing'), { recursive: true })
   const tmpSrv = await serveFixtures(workDir)
   try {

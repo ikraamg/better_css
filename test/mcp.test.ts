@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from 'vitest'
 import { execSync } from 'node:child_process'
 import { createServer } from 'node:http'
-import { mkdtempSync, readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
@@ -34,6 +34,14 @@ const client = new Client({ name: 'test', version: '0' })
 // open — it then never sees the close and leaks its Chrome (seen on Linux CI).
 await client.connect(new StdioClientTransport({ command: process.execPath, args: ['--import', 'tsx', 'src/mcp.ts'] }))
 afterAll(async () => { await client.close(); srv.close() })
+
+const dirs: string[] = []
+afterAll(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }) })
+function tmpDir(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix))
+  dirs.push(dir)
+  return dir
+}
 
 test('lists all ten tools', async () => {
   const { tools } = await client.listTools()
@@ -112,7 +120,7 @@ test('check tool with viewports checks each viewport and prefixes violations wit
 }, 60_000)
 
 test('snapshot/diff tools with viewports round-trip per-viewport snapshots', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'bettercss-mcp-test-'))
+  const dir = tmpDir('bettercss-mcp-test-')
   await client.callTool({
     name: 'snapshot',
     arguments: { url: `${srv.url}/responsive/index.html`, viewports: '1280x800,600x800', name: 'resp', dir },
@@ -178,14 +186,14 @@ test('layout tool rejects settled+atTime before ever loading the page (cheap pre
 })
 
 test('snapshot/diff tools with settled round-trip a clean diff on the animated fixture', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'bettercss-mcp-settled-test-'))
+  const dir = tmpDir('bettercss-mcp-settled-test-')
   await client.callTool({ name: 'snapshot', arguments: { url: `${srv.url}/animated/index.html`, name: 'anim', dir, settled: true } })
   const res = await client.callTool({ name: 'diff', arguments: { url: `${srv.url}/animated/index.html`, name: 'anim', dir, settled: true } })
   expect((res.content as any)[0].text).toContain('(no layout changes)')
 })
 
 test('verify tool with name diffs the resting layout and notes a missing per-viewport snapshot', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'bettercss-verify-mcp-test-'))
+  const dir = tmpDir('bettercss-verify-mcp-test-')
   await client.callTool({
     name: 'snapshot',
     arguments: { url: `${srv.url}/responsive/index.html`, viewports: '1280x800', name: 'v', dir },
