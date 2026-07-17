@@ -197,12 +197,18 @@ let shuttingDown: Promise<void> | null = null
 
 export function shutdownChrome(): Promise<void> {
   if (shuttingDown) return shuttingDown
-  if (!launched) return Promise.resolve()
+  if (!launched && !launching) return Promise.resolve()
   shuttingDown = doShutdown().finally(() => { shuttingDown = null })
   return shuttingDown
 }
 
 async function doShutdown(): Promise<void> {
+  // A signal can land while launchChrome is still in flight (watch's startup guard,
+  // blame's mid-walk handler) — Chrome's process exists from the moment spawn()
+  // returns, long before `launched` is set (DevTools-listening). Returning early here
+  // would orphan that whole tree; wait for the launch so it's killable. A FAILED
+  // launch rejected before setting `launched`, so there's nothing to kill.
+  if (launching) { try { await launching } catch {} }
   if (!launched) return
   const { proc, dir } = launched
   launched = null

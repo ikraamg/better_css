@@ -234,6 +234,35 @@ ${pollAndAct('nav.flag', "location.href = 'other.html'")}
   srv.close()
 }, 90_000)
 
+// safety: SIGINT during the STARTUP window (Chrome launched, page not yet ready —
+// before 'watching' prints and before runLoop's handlers exist) must still exit 0
+// with Chrome down. This is the "mistyped the URL, immediately Ctrl+C" pattern.
+// Waiting for the Chrome tree to appear (instead of a fixed sleep) proves the signal
+// lands inside watch()'s own startup — after its code is running, before the loop.
+test('SIGINT during startup (before watching prints) exits 0 with no Chrome orphans', async () => {
+  const dir = tempFixture()
+  writeFixture(dir, CSS_START)
+  const srv = await serve(dir)
+  const pidsBefore = chromePids()
+
+  const { child, buf } = startWatch(`${srv.url}/index.html`)
+  const spawnDeadline = Date.now() + 30_000
+  while (![...chromePids()].some((p) => !pidsBefore.has(p)) && Date.now() < spawnDeadline) {
+    await new Promise((r) => setTimeout(r, 50))
+  }
+  expect([...chromePids()].some((p) => !pidsBefore.has(p))).toBe(true)
+  child.kill('SIGINT')
+  const code = await waitClose(child)
+  expect(code, buf()).toBe(0)
+  srv.close()
+
+  const deadline = Date.now() + 15_000
+  while ([...chromePids()].some((p) => !pidsBefore.has(p)) && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 250))
+  }
+  expect([...chromePids()].filter((p) => !pidsBefore.has(p))).toEqual([])
+}, 90_000)
+
 // safety: SIGTERM (not just SIGINT) also shuts Chrome down cleanly, exit 0.
 test('watch handles SIGTERM the same as SIGINT: exit 0, no Chrome orphans', async () => {
   const dir = tempFixture()

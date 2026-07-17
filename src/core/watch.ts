@@ -1,4 +1,4 @@
-import { withPage } from './connect.js'
+import { shutdownChrome, withPage } from './connect.js'
 import { extract } from './extract.js'
 import { buildTree, renderTree, type BuiltTree } from './tree.js'
 import { checkInvariants, renderViolations, type Violation } from './invariants.js'
@@ -172,9 +172,27 @@ async function runLoop(client: any, url: string, interval: number): Promise<numb
 // CLI-only in v1 (see README/SKILL): a streaming daemon doesn't fit MCP's
 // request/response shape. An agent drives it via a background shell and reads the
 // stream instead of re-running `diff` after every edit.
+//
+// The clean-shutdown contract applies from INVOCATION, not from the first poll:
+// Chrome launch / CDP connect / navigate all happen inside withPage before runLoop
+// arms its handlers, and a Ctrl+C in that startup window ("mistyped the URL,
+// immediately interrupted") would otherwise hit Node's default disposition — exit 130
+// with the whole detached Chrome tree orphaned. So arm here first; shutdownChrome
+// itself waits out an in-flight launch (connect.ts), and the handoff to runLoop is
+// race-free: the removeListener calls and runLoop's own process.on run in the same
+// synchronous stretch (signals only ever arrive via the event loop between them).
 export async function watch(url: string, opts: WatchOpts = {}): Promise<number> {
-  return withPage(url, (client) => runLoop(client, url, opts.interval ?? DEFAULT_INTERVAL), {
-    port: opts.port,
-    viewport: opts.viewport,
-  })
+  const early = () => { void shutdownChrome().finally(() => process.exit(0)) }
+  process.on('SIGINT', early)
+  process.on('SIGTERM', early)
+  try {
+    return await withPage(url, (client) => {
+      process.removeListener('SIGINT', early)
+      process.removeListener('SIGTERM', early)
+      return runLoop(client, url, opts.interval ?? DEFAULT_INTERVAL)
+    }, { port: opts.port, viewport: opts.viewport })
+  } finally {
+    process.removeListener('SIGINT', early)
+    process.removeListener('SIGTERM', early)
+  }
 }
