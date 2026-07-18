@@ -123,9 +123,11 @@ cd csstruth
 npm install && npm run build
 ```
 
-Requires Node ≥ 20 and Chrome/Chromium. csstruth attaches to a running Chrome
-at port 9222 (`--remote-debugging-port=9222` — useful for logged-in pages),
-otherwise it launches its own headless instance.
+Requires Node ≥ 20 and Chrome/Chromium. By default csstruth launches its own
+isolated headless Chrome, so it never opens tabs in a browser you have open.
+To inspect logged-in or app-state pages in your own Chrome, start it with
+`--remote-debugging-port=9222` and pass `--attach` (CLI); `--port N` attaches to
+an explicit port. The MCP server is always isolated.
 
 ## Use as an MCP server (the agent loop)
 

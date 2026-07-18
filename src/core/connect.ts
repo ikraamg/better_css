@@ -22,6 +22,15 @@ let launched: { proc: ChildProcess; port: number; dir: string } | null = null
 let launching: Promise<number> | null = null
 const busyPages = new WeakSet<object>()
 
+// Opt-in attach to a developer's own Chrome on 9222 (for logged-in/app-state pages).
+// Default is OFF: csstruth launches its own isolated headless Chrome, so it never opens
+// tabs in — or fights over — a browser the developer has open for other work. The CLI's
+// --attach flag turns it on for that invocation; the MCP server stays isolated always
+// (a background server must not silently reach into the user's browser). An explicit
+// --port always attaches to that port regardless of this switch.
+let attachTo9222 = false
+export function setAttachMode(on: boolean): void { attachTo9222 = on }
+
 // Populated only when withPage's captureAnimations opt is set (src/core/animate.ts's
 // settleAnimations reads this). Animation.animationStarted events carry
 // animation.source.duration/delay/iterations — that's the only place seekable timing
@@ -74,11 +83,9 @@ async function resolvePort(explicit?: number): Promise<number> {
     if (await reachable(explicit)) return explicit
     throw new Error(`No Chrome at port ${explicit}. ${HELP}`)
   }
-  // Auto-attach to a developer's own Chrome on 9222 (documented: lets csstruth inspect
-  // logged-in/app-state pages). CSSTRUTH_NO_ATTACH opts out — the test suite sets it so
-  // runs launch an isolated headless Chrome instead of opening tabs in the user's browser,
-  // and it's the escape hatch for anyone who keeps a debug Chrome on 9222 for other work.
-  if (!process.env.CSSTRUTH_NO_ATTACH && (await reachable(9222))) return 9222
+  // Attach to a developer's Chrome on 9222 only when explicitly opted in (--attach);
+  // otherwise fall through to launching our own isolated headless instance.
+  if (attachTo9222 && (await reachable(9222))) return 9222
   if (launched && (await reachable(launched.port))) return launched.port
   // Re-check after the awaits above: a terminal shutdown can begin while the
   // reachability probes were in flight — launching now would create the exact

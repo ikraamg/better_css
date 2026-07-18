@@ -83,5 +83,7 @@ genuinely intentional pattern (animated counters, marquees), add
 
 ## Chrome
 
-Tools attach to Chrome at port 9222 if running (`--remote-debugging-port=9222`
-for logged-in/app-state pages), else launch their own headless Chrome.
+Tools launch their own isolated headless Chrome by default (they won't touch a
+browser you have open). For logged-in/app-state pages, run Chrome with
+`--remote-debugging-port=9222` and pass the CLI `--attach` flag; the MCP tools
+are always isolated.

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { DEFAULT_SWEEP, layoutNeverSettled, parseViewport, parseViewportList, shutdownChrome, withPage, type Viewport } from './core/connect.js'
+import { DEFAULT_SWEEP, layoutNeverSettled, parseViewport, parseViewportList, setAttachMode, shutdownChrome, withPage, type Viewport } from './core/connect.js'
 import { extract } from './core/extract.js'
 import { buildTree, findNode, renderTree } from './core/tree.js'
 import { checkInvariants, checkWithPersistence, renderViolations } from './core/invariants.js'
@@ -128,7 +128,8 @@ const USAGE = `csstruth <command> <url> [options]
                                                 dev servers under-report; throttle to reproduce
                                                 production shifts. No --settled/--at-time/--click/
                                                 --scroll-to/--hover/--focus/--active/--viewports
-  options: --port N (attach to Chrome at port N instead of 9222/headless)
+  options: --attach (use your own Chrome on port 9222 — e.g. logged-in pages — instead of
+             launching an isolated headless instance); --port N (attach to Chrome at port N)
            --viewport WxH (emulated viewport size, e.g. 1280x800)
            --viewports W1xH1,W2xH2,... (check/snapshot/diff/verify once per viewport)
            --hover S, --focus S, --active S (force a pseudo-state on selector S;
@@ -199,6 +200,11 @@ const REQUIRED: Record<string, string[]> = {
 
 async function main(): Promise<number> {
   const cmd = process.argv[2]
+
+  // --attach opts into using a developer's own Chrome on 9222 (logged-in pages); default is
+  // an isolated headless launch. Global boolean flag (present anywhere in argv), not a value
+  // flag, so it composes with every command's own arg parsing without threading.
+  if (process.argv.includes('--attach')) setAttachMode(true)
 
   // Every command except watch (which owns its own SIGINT/SIGTERM exit-0 contract, armed
   // inside watch() itself) gets this shared safety net: an unhandled Ctrl+C mid-check/
