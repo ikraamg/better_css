@@ -74,7 +74,11 @@ async function resolvePort(explicit?: number): Promise<number> {
     if (await reachable(explicit)) return explicit
     throw new Error(`No Chrome at port ${explicit}. ${HELP}`)
   }
-  if (await reachable(9222)) return 9222
+  // Auto-attach to a developer's own Chrome on 9222 (documented: lets csstruth inspect
+  // logged-in/app-state pages). CSSTRUTH_NO_ATTACH opts out — the test suite sets it so
+  // runs launch an isolated headless Chrome instead of opening tabs in the user's browser,
+  // and it's the escape hatch for anyone who keeps a debug Chrome on 9222 for other work.
+  if (!process.env.CSSTRUTH_NO_ATTACH && (await reachable(9222))) return 9222
   if (launched && (await reachable(launched.port))) return launched.port
   // Re-check after the awaits above: a terminal shutdown can begin while the
   // reachability probes were in flight — launching now would create the exact
