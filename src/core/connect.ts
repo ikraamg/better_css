@@ -165,6 +165,14 @@ export async function withPage<T>(
     // the one gap where a caller can arm something that must see the FIRST document (e.g.
     // stability.ts's Page.addScriptToEvaluateOnNewDocument for its layout-shift observer).
     beforeNavigate?: (client: any) => Promise<void>
+    // Skips the post-navigate settle gate below entirely (up to NAV_SETTLE_CAP_MS of
+    // wall-clock on a page that never settles). Only stability.ts sets this: its contract
+    // measures --duration from LOAD, and its own buffered PerformanceObserver already
+    // captures every shift from before navigation (buffered: true), so it needs no settled
+    // DOM to start from — waiting here only inflates its observation window and contradicts
+    // its own docs. Every other caller (check/layout/inspect/explain/verify/snapshot/diff/
+    // blame/fix/watch) keeps the gate: they want a settled capture, not a load-time sample.
+    skipSettle?: boolean
   } = {},
 ): Promise<T> {
   const port = await resolvePort(opts.port)
@@ -206,7 +214,7 @@ export async function withPage<T>(
       // One minimal pass only, mirroring interact.ts's skipSettleWait: just enough for a
       // load-triggered animation to have registered with Animation.animationStarted.
       await waitForSettle(client, 1)
-    } else if (!(await waitForSettle(client, NAV_SETTLE_CAP_MS))) {
+    } else if (!opts.skipSettle && !(await waitForSettle(client, NAV_SETTLE_CAP_MS))) {
       neverSettled.add(client)
     }
     return await fn(client)

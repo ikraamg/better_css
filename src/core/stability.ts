@@ -101,6 +101,11 @@ export async function measureStability(url: string, opts: StabilityOpts = {}): P
     port: opts.port,
     viewport: opts.viewport,
     beforeNavigate: (client: any) => client.Page.addScriptToEvaluateOnNewDocument({ source: INSTALL_SCRIPT }),
+    // The buffered PerformanceObserver above already captures every shift from before
+    // navigation — withPage's post-navigate settle gate would only add up to
+    // NAV_SETTLE_CAP_MS to this observation window, contradicting the --duration ("ms past
+    // load") contract (see connect.ts's skipSettle doc).
+    skipSettle: true,
   })
 
   const score = raw.shifts.reduce((sum, s) => sum + s.score, 0)

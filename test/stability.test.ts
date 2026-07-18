@@ -48,6 +48,19 @@ test('a shift in the first frames after first paint is still caught (observer pr
   expect(result.shifts[0].atMs).toBeLessThan(300)
 }, 20_000)
 
+// Task 1 regression: stability's own buffered PerformanceObserver already captures every
+// shift from before navigation, so withPage's global post-navigate settle gate
+// (NAV_SETTLE_CAP_MS) adds nothing but wall-clock here — and contradicts the --duration
+// contract ("ms past load", not past load+settle-cap). Wall-clock assertion, not a mocked
+// seam: the whole point is the caller-facing timing. Before the fix, a never-settling page
+// burns the full 3s settle cap on top of the 500ms duration (~4.9s observed); after the
+// fix it's ~launch + 500ms, comfortably under 4s.
+test('stability --duration does not pay the settle-gate cap on a never-settling page', async () => {
+  const start = Date.now()
+  await measureStability(`${srv.url}/async-render/never-settles.html`, { duration: 500 })
+  expect(Date.now() - start).toBeLessThan(4000)
+}, 20_000)
+
 test('--threshold overrides the default 0.1 boundary', async () => {
   const result = await measureStability(`${srv.url}/shifty/index.html`, {
     viewport: { width: 400, height: 800 },
