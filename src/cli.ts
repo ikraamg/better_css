@@ -3,7 +3,7 @@ import { DEFAULT_SWEEP, forEachViewport, layoutNeverSettled, parseViewport, pars
 import { extract } from './core/extract.js'
 import { buildTree, findNode, renderTree } from './core/tree.js'
 import { checkInvariants, checkWithPersistence, renderViolations } from './core/invariants.js'
-import { baselineKey, diffBaseline, loadBaselineFile, renderBaselineNote, renderBaselineUpdate, writeBaselineFile, type BaselineDelta } from './core/baseline.js'
+import { applyBaselineUpdate, baselineKey, baselineShapeWarning, diffBaseline, loadBaselineFile, renderBaselineNote, writeBaselineFile, type BaselineDelta } from './core/baseline.js'
 import { explain, renderExplanation } from './core/explain.js'
 import { inspect } from './core/inspect.js'
 import { diffTrees, loadSnapshot, renderDiff, saveSnapshot } from './core/snapshot.js'
@@ -29,7 +29,13 @@ const USAGE = `csstruth <command> <url> [options]
                                                 <selector>". Missing FILE is an error. --update-
                                                 baseline (requires --baseline) rewrites FILE to
                                                 the current set afterward and prints what was
-                                                added/removed
+                                                added/removed. check itself defaults to a SINGLE
+                                                unlabeled 1280x800 capture (not a matrix, unlike
+                                                verify/baseline) — pairing it with a baseline file
+                                                requires passing the SAME --viewports to check that
+                                                was passed to baseline (or --viewports to neither);
+                                                a shape mismatch prints a loud warning instead of
+                                                silently reporting everything new
   snapshot  <url> --name NAME [--dir DIR]      lock current LayoutTree to a .tree file
   diff      <url> --name NAME [--dir DIR]      diff current layout vs snapshot
   fix       <url> --root DIR [--apply] [--selector S]
@@ -61,12 +67,19 @@ const USAGE = `csstruth <command> <url> [options]
                                                 capture the CURRENT violation set (after the
                                                 same persistence filter check uses) and write
                                                 it as a sorted, diff-friendly file, one line
-                                                per violation, keyed (viewport?, rule,
-                                                selector) — px excluded (drifts). The viewport
-                                                is only part of the key when --viewports is
-                                                given here; pair with check/verify's --baseline
-                                                by matching --viewports (or lack of it) on both
-                                                sides. Accepts the same --hover/--focus/
+                                                per violation, keyed (viewport, rule, selector)
+                                                grouped the SAME way renderViolations displays
+                                                them (id-bearing selectors collapse to one
+                                                pattern) — px excluded (drifts). ALWAYS runs as
+                                                a matrix (like verify), defaulting to
+                                                --viewports ${DEFAULT_SWEEP} when --viewports/
+                                                --viewport is omitted, so the keys are always
+                                                labeled — pair with verify's own default the
+                                                same way (neither passes --viewports). check
+                                                defaults to a single UNLABELED 1280x800
+                                                capture instead, so pairing baseline with check
+                                                needs an explicit matching --viewports on both.
+                                                Accepts the same --hover/--focus/
                                                 --active/--click/--scroll-to/--settled/
                                                 --at-time as check, to baseline a forced state.
   verify    <url> [--name NAME --dir DIR]      composite: check invariants + (if --name given)
@@ -85,9 +98,13 @@ const USAGE = `csstruth <command> <url> [options]
                                                 exactly as on check (per-viewport, verdict becomes
                                                 "PASS (R resolved, N new, B baseline)" /
                                                 "FAIL (R resolved, N new, B baseline)" — the delta
-                                                decides, not the raw violation count); a baseline
-                                                paired with verify's default sweep must itself be
-                                                captured with --viewports ${DEFAULT_SWEEP}
+                                                decides, not the raw violation count); baseline's
+                                                own default is also --viewports ${DEFAULT_SWEEP}, so
+                                                pairing verify's default with a default baseline
+                                                (neither passing --viewports) just works. A shape
+                                                mismatch (e.g. a baseline captured unlabeled, or with
+                                                disjoint --viewports) prints a loud warning instead
+                                                of silently reporting everything as new
   blame     --root DIR --page REL.html [--selector S] [--max-commits N] [--viewport WxH]
                                                 which commit broke the layout. Scope v1: STATIC
                                                 roots only — each historical version is served
@@ -390,10 +407,13 @@ async function main(): Promise<number> {
       assertNoInteractNavigation(client)
       return violations
     }
-    const keys = viewports
-      ? (await forEachViewport(url, viewports, async (client, vp) =>
-        (await capture(client)).map((v) => baselineKey(vp.label, v)), opts)).flatMap((r) => r.result)
-      : await withPage(url, async (client) => (await capture(client)).map((v) => baselineKey(undefined, v)), opts)
+    // Field #6 fix: baseline ALWAYS runs as a matrix now, defaulting to DEFAULT_SWEEP —
+    // matching verify's own default so the README quickstart (`baseline <url>` then
+    // `verify <url> --baseline`, neither passing --viewports) actually pairs up. --viewport
+    // (singular) acts as a one-entry sweep, same convention as verify's own --viewport.
+    const vps = viewports ?? parseViewportList(f.viewport ?? DEFAULT_SWEEP)
+    const keys = (await forEachViewport(url, vps, async (client, vp) =>
+      (await capture(client)).map((v) => baselineKey(vp.label, v)), opts)).flatMap((r) => r.result)
     writeBaselineFile(file, keys)
     const n = new Set(keys).size
     console.log(`baseline written: ${file} (${n} violation${n === 1 ? '' : 's'})`)
@@ -468,8 +488,7 @@ async function main(): Promise<number> {
     })
     let out = output
     if (f['update-baseline'] !== undefined && baselineSummary) {
-      writeBaselineFile(f.baseline!, baselineSummary.allCurrent)
-      out += `\n${renderBaselineUpdate(f.baseline!, baselineSummary)}`
+      out += `\n${applyBaselineUpdate(f.baseline!, baselineSummary)}`
     }
     if (dirty) process.exitCode = 1
     console.log(out)
@@ -484,8 +503,7 @@ async function main(): Promise<number> {
       const { output, dirty, baselineSummary } = await checkMatrix(url, viewports, { ...mopts, states, interact, animate, baseline })
       let out = output
       if (f['update-baseline'] !== undefined && baselineSummary) {
-        writeBaselineFile(f.baseline!, baselineSummary.allCurrent)
-        out += `\n${renderBaselineUpdate(f.baseline!, baselineSummary)}`
+        out += `\n${applyBaselineUpdate(f.baseline!, baselineSummary)}`
       }
       if (dirty) process.exitCode = 1
       console.log(out)
@@ -526,8 +544,11 @@ async function main(): Promise<number> {
         baselineDelta = delta
         const toRender = delta ? delta.newViolations : violations
         const baselineNote = delta ? renderBaselineNote(delta) : ''
+        // Loud safety net (field #6 follow-up): this path is always single-page (never a
+        // matrix), so a baseline captured as a labeled matrix can never match here.
+        const shapeWarning = baseline ? baselineShapeWarning(baseline, undefined) : ''
         if ((delta ? delta.newViolations.length : violations.length) > 0) process.exitCode = 1
-        result = (await renderViolations(client, toRender)) + (baselineNote ? `\n${baselineNote}` : '') +
+        result = (shapeWarning ? `${shapeWarning}\n` : '') + (await renderViolations(client, toRender)) + (baselineNote ? `\n${baselineNote}` : '') +
           (persistenceFiltered ? '\nnote: page never settled — reporting only violations stable across two captures' : '')
         break
       }
@@ -554,8 +575,7 @@ async function main(): Promise<number> {
 
   let out = output
   if (cmd === 'check' && f['update-baseline'] !== undefined && baselineDelta) {
-    writeBaselineFile(f.baseline!, baselineDelta.currentKeys)
-    out += `\n${renderBaselineUpdate(f.baseline!, { added: baselineDelta.addedKeys, removed: baselineDelta.resolvedKeys, allCurrent: baselineDelta.currentKeys })}`
+    out += `\n${applyBaselineUpdate(f.baseline!, { added: baselineDelta.addedKeys, removed: baselineDelta.resolvedKeys, allCurrent: baselineDelta.currentKeys })}`
   }
   console.log(out)
   return Number(process.exitCode ?? 0)

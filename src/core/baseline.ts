@@ -1,16 +1,21 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
-import { violationKey, type Violation } from './invariants.js'
+import type { Viewport } from './connect.js'
+import { groupingKey, type Violation } from './invariants.js'
 
-// Field #6: the identity key a baseline file accepts violations by — the SAME (rule,
-// selector) identity invariants.ts's violationKey/renderViolations grouping already use
-// (px excluded: it drifts run to run), optionally scoped to a viewport label. The label is
-// present only when the run producing this key was a matrix (checkMatrix/verifyMatrix, or
-// `baseline --viewports`) — a plain single-page capture has no viewport concept to key on.
-// Pairing a baseline with a matrix run therefore requires the SAME viewport(s) on both
-// sides; pairing with a non-matrix run requires neither side pass --viewports.
+// Field #6: the identity key a baseline file accepts violations by — groupingKey (px
+// excluded: it drifts run to run; #id stripped: three id-distinct instances of the same
+// pattern are one signal, not three), optionally scoped to a viewport label. Delegating to
+// groupingKey — the SAME function renderViolations groups its display lines by — is load-
+// bearing: a baseline keyed by anything else can silently stop matching what the grouped
+// output shows on screen. The label is present only when the run producing this key was a
+// matrix (checkMatrix/verifyMatrix, or `baseline --viewports`) — a plain single-page
+// capture has no viewport concept to key on. Pairing a baseline with a matrix run
+// therefore requires the SAME viewport(s) on both sides; pairing with a non-matrix run
+// requires neither side pass --viewports (see baselineShapeWarning below for the loud
+// safety net when that pairing is wrong).
 export function baselineKey(label: string | undefined, v: Violation): string {
-  return label ? `[${label}] ${violationKey(v)}` : violationKey(v)
+  return label ? `[${label}] ${groupingKey(v)}` : groupingKey(v)
 }
 
 export function writeBaselineFile(path: string, keys: string[]): void {
@@ -94,4 +99,39 @@ export function renderBaselineUpdate(file: string, summary: BaselineSummary): st
   for (const k of summary.added) lines.push(`  + ${k}`)
   for (const k of summary.removed) lines.push(`  - ${k}`)
   return lines.join('\n')
+}
+
+// Shared by every --update-baseline call site (cli.ts and mcp.ts, ~6 in total): write the
+// file, then render what changed. One place instead of a copy-pasted write+render pair at
+// each of check/verify's single-page and matrix branches.
+export function applyBaselineUpdate(file: string, summary: BaselineSummary): string {
+  writeBaselineFile(file, summary.allCurrent)
+  return renderBaselineUpdate(file, summary)
+}
+
+function shapeOf(viewports: Viewport[] | undefined): string {
+  return viewports ? `--viewports ${viewports.map((v) => v.label).join(',')}` : 'no --viewports (single, unlabeled)'
+}
+
+// Loud safety net (field #6 follow-up): baselineKey's [label] prefix is present only when
+// BOTH the baseline capture and the comparison run were matrices over the SAME labels —
+// get that pairing wrong and every diffBaseline lookup misses silently (a labeled current
+// key can never equal an unlabeled baseline key, or a differently-labeled one), reporting
+// "100% new" instead of the mismatch it actually is. Catches the two shapes that can NEVER
+// legitimately match: the baseline is entirely labeled but this run isn't a matrix (or vice
+// versa), or the baseline's label set shares NOTHING with this run's viewports. A baseline
+// that's only PARTIALLY labeled-overlapping (e.g. captured for one more/fewer viewport) is
+// left alone — that's an ordinary partial baseline, not a shape mismatch.
+export function baselineShapeWarning(baseline: Set<string>, viewports: Viewport[] | undefined): string {
+  if (baseline.size === 0) return ''
+  const labels = [...baseline].map((k) => k.match(/^\[([^\]]+)\]/)?.[1])
+  const allLabeled = labels.every((l) => l !== undefined)
+  const allUnlabeled = labels.every((l) => l === undefined)
+  if (!allLabeled && !allUnlabeled) return '' // mixed file — not a shape this check reasons about
+  const isMatrix = viewports !== undefined
+  const currentLabels = new Set(viewports?.map((v) => v.label) ?? [])
+  const disjoint = allLabeled && isMatrix && labels.every((l) => !currentLabels.has(l as string))
+  if (allLabeled === isMatrix && !disjoint) return '' // shapes agree (both matrix or both single) and labels overlap
+  const baselineShape = allLabeled ? `--viewports ${[...new Set(labels)].join(',')}` : 'no --viewports (single, unlabeled)'
+  return `warning: baseline was captured with a different viewport configuration (baseline: ${baselineShape}; this run: ${shapeOf(viewports)}) — keys won't match; re-run baseline with the same --viewports`
 }

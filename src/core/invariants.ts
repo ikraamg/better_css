@@ -353,11 +353,24 @@ function annotateInstancePositions(tree: BuiltTree, out: Violation[]): void {
   }
 }
 
-// Identity key for the persistence filter below (field #1) — rule + full selector.
-// Two captures 400ms apart describe the SAME DOM, so a selector staying stable across
-// both is exactly the signal that tells a persisted violation from a mid-render phantom.
+// Identity key for the persistence filter below (field #1) — rule + full selector,
+// INCLUDING any #id. Two captures 400ms apart describe the SAME DOM, so a selector
+// (id and all) staying stable across both is exactly the signal that tells a persisted
+// violation from a mid-render phantom. NOT the same identity as groupingKey below —
+// that one deliberately strips ids to collapse a repeated pattern; this one needs the
+// id precisely because it's comparing the same element to itself.
 export function violationKey(v: Violation): string {
   return `${v.rule} ${v.selector}`
+}
+
+// Field #6: the ONE grouping identity shared by renderViolations' display grouping AND
+// baseline.ts's baselineKey — strips the #id so three id-distinct instances of the same
+// pattern (e.g. per-row vote buttons, or the same pattern reappearing under different ids
+// on paginated/dynamic content) are one signal, not three. Exported so baseline.ts can't
+// drift from what's actually shown on screen: two call sites computing "the same" key
+// independently is exactly how they drift.
+export function groupingKey(v: Violation): string {
+  return `${v.rule} ${v.selector.replace(/#[^.]+/, '')}`
 }
 
 // Field #1 persistence filter: when the post-navigation settle cap was hit (the page
@@ -397,10 +410,10 @@ export async function renderViolations(client: any, violations: Violation[]): Pr
   if (!violations.length) return 'no violations'
   const groups = new Map<string, Violation[]>()
   for (const v of violations) {
-    // group by tag + classes, not the #id — three id-distinct instances of the same
-    // pattern (e.g. per-row vote buttons) are one signal, not three; the displayed
-    // line still shows the first violation's full selector (with its id)
-    const key = `${v.rule} ${v.selector.replace(/#[^.]+/, '')}`
+    // groupingKey strips the #id — three id-distinct instances of the same pattern
+    // (e.g. per-row vote buttons) are one signal, not three; the displayed line still
+    // shows the first violation's full selector (with its id)
+    const key = groupingKey(v)
     const group = groups.get(key)
     if (group) group.push(v)
     else groups.set(key, [v])

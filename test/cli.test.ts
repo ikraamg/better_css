@@ -487,10 +487,10 @@ function serveMutatedHover() {
 
 test('(a) baseline write on the hover fixture pins deterministic, sorted, px-excluded file content', async () => {
   const file = baselineFile()
-  const { stdout } = await cli('baseline', `${srv.url}/hover/index.html`, '--hover', '.cta', '--file', file)
+  const { stdout } = await cli('baseline', `${srv.url}/hover/index.html`, '--hover', '.cta', '--viewports', '1280x800', '--file', file)
   expect(stdout).toContain('baseline written:')
   expect(stdout).toContain('1 violation')
-  expect(readFileSync(file, 'utf8')).toBe('parent-bleed a.cta\n')
+  expect(readFileSync(file, 'utf8')).toBe('[1280x800] parent-bleed a.cta\n')
 }, 60_000)
 
 test('(b) verify --baseline collapses a still-present baselined violation to PASS', async () => {
@@ -551,6 +551,46 @@ test('(e) --update-baseline rewrites the file to the current set and round-trips
   } finally {
     mutated.close()
   }
+}, 60_000)
+
+// Critical fix (key identity): id-distinct instances of one pattern collapse to a SINGLE
+// baseline key, matching how check groups them for display. Before the fix baselineKey kept
+// the #id, so the 3 vote links wrote 3 keys and a same-pattern page with different ids read
+// as 100% new. idmismatch fixture: 3 <a id="vote-N" class="vote"> 12px tap targets.
+test('(f) baseline collapses id-distinct same-pattern violations to one key', async () => {
+  const file = baselineFile()
+  await cli('baseline', `${srv.url}/idmismatch/index.html`, '--viewports', '1280x800', '--file', file)
+  // one key, id stripped — not three id-bearing keys
+  expect(readFileSync(file, 'utf8')).toBe('[1280x800] tap-target a.vote\n')
+  const { stdout } = await cli('check', `${srv.url}/idmismatch/index.html`, '--viewports', '1280x800', '--baseline', file)
+  expect(stdout).toContain('baseline: 3 accepted violations unchanged')
+  expect(stdout).not.toMatch(/tap-target:/)
+}, 60_000)
+
+// Critical fix (default viewport matching): the README's own quickstart — baseline then
+// verify with NO viewport flags on either side. verify always runs the default sweep, so
+// baseline must too (labeled keys), or nothing collapses. Before the fix baseline wrote
+// unlabeled keys here and verify reported every violation as new across all 3 viewports.
+test('(g) the no-flags baseline→verify quickstart collapses instead of reporting all-new', async () => {
+  const file = baselineFile()
+  await cli('baseline', `${srv.url}/idmismatch/index.html`, '--file', file)
+  // baseline defaulted to the full sweep, so keys are per-viewport labeled
+  expect(readFileSync(file, 'utf8')).toBe(
+    '[1280x800] tap-target a.vote\n[375x800] tap-target a.vote\n[768x800] tap-target a.vote\n')
+  const { stdout } = await cli('verify', `${srv.url}/idmismatch/index.html`, '--baseline', file)
+  expect(stdout.split('\n')[0]).toBe('VERDICT: PASS (0 resolved, 0 new, 9 baseline)')
+}, 60_000)
+
+// Critical fix (loud safety net): a baseline captured with a different viewport shape than
+// the run it's compared against must WARN, not silently report everything new. Here a labeled
+// 1280x800 baseline is compared by a default single-viewport check (unlabeled keys).
+test('(h) a mismatched-shape baseline pairing prints a loud warning', async () => {
+  const file = baselineFile()
+  await cli('baseline', `${srv.url}/idmismatch/index.html`, '--viewports', '1280x800', '--file', file)
+  // check defaults to a single unlabeled 1280x800 — labels won't match the file's [1280x800],
+  // so nothing collapses and check exits 1 (cli() rejects); the warning is on stdout regardless.
+  const res = await cli('check', `${srv.url}/idmismatch/index.html`, '--baseline', file).catch((e) => e)
+  expect(res.stdout).toContain('warning: baseline was captured with a different viewport configuration')
 }, 60_000)
 
 test('missing --baseline file is a clear resolved-path error, exit 2', async () => {

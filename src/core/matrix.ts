@@ -2,7 +2,7 @@ import { forEachViewport, layoutNeverSettled, pageWasBusy, type Viewport } from 
 import { extract } from './extract.js'
 import { buildTree, renderTree } from './tree.js'
 import { checkInvariants, checkWithPersistence, renderViolations } from './invariants.js'
-import { aggregateBaselineSummary, diffBaseline, renderBaselineNote, type BaselineSummary } from './baseline.js'
+import { aggregateBaselineSummary, baselineShapeWarning, diffBaseline, renderBaselineNote, type BaselineSummary } from './baseline.js'
 import { diffTrees, loadSnapshot, renderDiff, saveSnapshot } from './snapshot.js'
 import { forcePseudoStates, type PseudoStates } from './state.js'
 import { assertNoInteractNavigation, interactWasUnsettled, runInteractSteps, type InteractSteps } from './interact.js'
@@ -63,7 +63,9 @@ export async function checkMatrix(
     .join(', ')
   const dirty = results.some((r) => r.result.count > 0)
   const baselineSummary = opts.baseline ? aggregateBaselineSummary(results.map((r) => r.result.delta!)) : undefined
-  return { output: `${body}\nchecked ${results.length} viewports: ${summary}`, dirty, baselineSummary }
+  // Loud safety net (field #6 follow-up): once per call, not per viewport.
+  const shapeWarning = opts.baseline ? baselineShapeWarning(opts.baseline, viewports) : ''
+  return { output: `${shapeWarning ? `${shapeWarning}\n` : ''}${body}\nchecked ${results.length} viewports: ${summary}`, dirty, baselineSummary }
 }
 
 // snapshot, once per viewport → `<name>@WxH.tree` per file (plain saveSnapshot naming,

@@ -1,0 +1,12 @@
+<!doctype html><html><head><style>
+* { margin: 0; padding: 0; }
+body { font-family: monospace; }
+/* three same-pattern vote links, each with a DISTINCT id but the same class —
+   all are 12x12 tap targets (< 24px), a violation at every viewport width.
+   They render identically; check groups them as one, so a baseline must too. */
+.vote { display: block; width: 12px; height: 12px; overflow: hidden; }
+</style></head><body>
+<a id="vote-1" class="vote" href="#">^</a>
+<a id="vote-2" class="vote" href="#">^</a>
+<a id="vote-3" class="vote" href="#">^</a>
+</body></html>

@@ -6,7 +6,7 @@ import {
   aggregateBaselineSummary, baselineKey, diffBaseline, loadBaselineFile,
   renderBaselineNote, renderBaselineUpdate, writeBaselineFile,
 } from '../src/core/baseline.js'
-import type { Violation } from '../src/core/invariants.js'
+import { groupingKey, type Violation } from '../src/core/invariants.js'
 
 function v(rule: Violation['rule'], selector: string, px?: number): Violation {
   return { rule, selector, message: '', backendNodeId: 0, px }
@@ -15,6 +15,17 @@ function v(rule: Violation['rule'], selector: string, px?: number): Violation {
 test('baselineKey: px excluded, label optional', () => {
   expect(baselineKey(undefined, v('parent-bleed', 'a.cta', 100))).toBe('parent-bleed a.cta')
   expect(baselineKey('1280x800', v('parent-bleed', 'a.cta', 100))).toBe('[1280x800] parent-bleed a.cta')
+})
+
+// Critical fix: baselineKey MUST match renderViolations' grouping key exactly, which strips
+// the #id (three id-distinct instances of one pattern are one signal, not three). Before the
+// fix baselineKey kept the id, so id-bearing selectors never collapsed against a baseline.
+test('baselineKey strips the #id, matching the display grouping key', () => {
+  expect(baselineKey(undefined, v('tap-target', 'a#vote-1.vote', 12))).toBe('tap-target a.vote')
+  expect(baselineKey(undefined, v('tap-target', 'a#vote-9.vote', 12)))
+    .toBe(baselineKey(undefined, v('tap-target', 'a#vote-1.vote', 12)))
+  expect(baselineKey(undefined, v('tap-target', 'a#vote-1.vote', 12)))
+    .toBe(groupingKey(v('tap-target', 'a#vote-1.vote', 12)))
 })
 
 test('diffBaseline: new/resolved/unchanged, scoped to one label at a time', () => {

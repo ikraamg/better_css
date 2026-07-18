@@ -6,7 +6,7 @@ import { DEFAULT_SWEEP, forEachViewport, layoutNeverSettled, pageWasBusy, parseV
 import { extract } from './core/extract.js'
 import { buildTree, findNode, renderTree } from './core/tree.js'
 import { checkInvariants, checkWithPersistence, renderViolations } from './core/invariants.js'
-import { baselineKey, diffBaseline, loadBaselineFile, renderBaselineNote, renderBaselineUpdate, writeBaselineFile } from './core/baseline.js'
+import { applyBaselineUpdate, baselineKey, baselineShapeWarning, diffBaseline, loadBaselineFile, renderBaselineNote, writeBaselineFile } from './core/baseline.js'
 import { explain, renderExplanation } from './core/explain.js'
 import { inspect } from './core/inspect.js'
 import { diffTrees, loadSnapshot, renderDiff, saveSnapshot } from './core/snapshot.js'
@@ -126,10 +126,7 @@ server.tool('check', 'Run layout invariants (overflow, bleed, clipped text, unin
     if (vs) {
       return checkMatrix(u, parseViewportList(vs), { port: p, states: { hover: h, focus: fo, active: a }, interact: { click: cl, scrollTo: st }, animate: { settled: se, atTime: at }, baseline: baselineSet }).then((r) => {
         let out = r.output
-        if (updateBaseline && r.baselineSummary) {
-          writeBaselineFile(baseline!, r.baselineSummary.allCurrent)
-          out += `\n${renderBaselineUpdate(baseline!, r.baselineSummary)}`
-        }
+        if (updateBaseline && r.baselineSummary) out += `\n${applyBaselineUpdate(baseline!, r.baselineSummary)}`
         return text(out)
       })
     }
@@ -139,12 +136,12 @@ server.tool('check', 'Run layout invariants (overflow, bleed, clipped text, unin
       const delta = baselineSet ? diffBaseline(baselineSet, undefined, violations) : undefined
       const toRender = delta ? delta.newViolations : violations
       const baselineNote = delta ? renderBaselineNote(delta) : ''
-      let out = (await renderViolations(client, toRender)) + (baselineNote ? `\n${baselineNote}` : '') +
+      // Loud safety net (field #6 follow-up): this path is always single-page (never a
+      // matrix), so a baseline captured as a labeled matrix can never match here.
+      const shapeWarning = baselineSet ? baselineShapeWarning(baselineSet, undefined) : ''
+      let out = (shapeWarning ? `${shapeWarning}\n` : '') + (await renderViolations(client, toRender)) + (baselineNote ? `\n${baselineNote}` : '') +
         (persistenceFiltered ? '\nnote: page never settled — reporting only violations stable across two captures' : '')
-      if (updateBaseline && delta) {
-        writeBaselineFile(baseline!, delta.currentKeys)
-        out += `\n${renderBaselineUpdate(baseline!, { added: delta.addedKeys, removed: delta.resolvedKeys, allCurrent: delta.currentKeys })}`
-      }
+      if (updateBaseline && delta) out += `\n${applyBaselineUpdate(baseline!, { added: delta.addedKeys, removed: delta.resolvedKeys, allCurrent: delta.currentKeys })}`
       return out
     })
   })
@@ -246,10 +243,7 @@ server.tool('verify', `Composite one-shot "is this page correct": runs layout in
       animate: needsAnimationCapture(animate) ? animate : undefined, name, dir, baseline: baselineSet,
     }).then((r) => {
       let out = r.output
-      if (updateBaseline && r.baselineSummary) {
-        writeBaselineFile(baseline!, r.baselineSummary.allCurrent)
-        out += `\n${renderBaselineUpdate(baseline!, r.baselineSummary)}`
-      }
+      if (updateBaseline && r.baselineSummary) out += `\n${applyBaselineUpdate(baseline!, r.baselineSummary)}`
       return text(out)
     })
   })

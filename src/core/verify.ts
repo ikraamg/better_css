@@ -2,7 +2,7 @@ import { forEachViewport, layoutNeverSettled, pageWasBusy, type Viewport } from 
 import { extract } from './extract.js'
 import { buildTree, renderTree } from './tree.js'
 import { checkInvariants, renderViolations, violationKey } from './invariants.js'
-import { aggregateBaselineSummary, diffBaseline, renderBaselineNote, type BaselineSummary } from './baseline.js'
+import { aggregateBaselineSummary, baselineShapeWarning, diffBaseline, renderBaselineNote, type BaselineSummary } from './baseline.js'
 import { diffTrees, loadSnapshot, renderDiff } from './snapshot.js'
 import { forcePseudoStates, type PseudoStates } from './state.js'
 import { assertNoInteractNavigation, hasInteractSteps, interactWasUnsettled, runInteractSteps, type InteractSteps } from './interact.js'
@@ -148,7 +148,11 @@ export async function verifyMatrix(
         ? `VERDICT: INCONCLUSIVE (page never settled; ${totalNew} persistent violations)`
         : `VERDICT: FAIL (${totalNew} violations across ${viewports.length} viewports${totalChanges ? `, ${totalChanges} layout changes` : ''})`)
       : (anyNeverSettled ? 'VERDICT: PASS (page never fully settled)' : 'VERDICT: PASS'))
-  const output = `${verdict}\n${blocks.join('\n')}\nchecked ${checked.length} viewports: ${summary}`
+  // Loud safety net (field #6 follow-up): computed once per call, not per viewport — a
+  // shape mismatch is a property of the whole (baseline, run) pairing, not any one
+  // viewport's data.
+  const shapeWarning = opts.baseline ? baselineShapeWarning(opts.baseline, viewports) : ''
+  const output = `${verdict}${shapeWarning ? `\n${shapeWarning}` : ''}\n${blocks.join('\n')}\nchecked ${checked.length} viewports: ${summary}`
   const baselineSummary = opts.baseline ? aggregateBaselineSummary(checked.map((c) => c.result.delta!)) : undefined
   return { output, dirty, baselineSummary }
 }
