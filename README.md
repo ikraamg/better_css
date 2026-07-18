@@ -174,6 +174,16 @@ To inspect logged-in or app-state pages in your own Chrome, start it with
 `--remote-debugging-port=9222` and pass `--attach` (CLI); `--port N` attaches to
 an explicit port. The MCP server is always isolated.
 
+Any viewport ≤ 500px wide — the default sweep's `375x800` leg included — is
+emulated as a **real phone** (`mobile: true`, `deviceScaleFactor: 2`, touch
+enabled), not a desktop window squeezed narrow. This exercises the actual
+mobile render: `<meta viewport>` fallback behavior, coarse-pointer/hover media
+queries, and touch feature detection. Reported geometry stays in CSS px
+regardless of the device pixel ratio, so a static page's boxes are byte-
+identical to the old emulation — only genuinely mobile-specific rendering
+differs. Pass `--desktop-only` to force the old squeezed-desktop emulation
+(`mobile: false`, DPR 1) at every width.
+
 ## Use as an MCP server (the agent loop)
 
 ```bash

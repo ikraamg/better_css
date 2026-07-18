@@ -2,7 +2,7 @@ import { readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { afterAll, expect, test } from 'vitest'
 import { serveFixtures } from './helpers/server.js'
-import { abandonedProfilePids, shutdownChrome, stragglerPids, withPage } from '../src/core/connect.js'
+import { abandonedProfilePids, setDesktopOnly, shutdownChrome, stragglerPids, withPage } from '../src/core/connect.js'
 
 const srv = await serveFixtures('fixtures')
 afterAll(async () => { srv.close(); await shutdownChrome() })
@@ -37,6 +37,39 @@ test('concurrent withPage calls launch at most one Chrome', async () => {
   expect(b).toBe(4)
   // One temp user-data dir per launch; 0 if an external Chrome on 9222 was attached.
   expect(dirs() - before).toBeLessThanOrEqual(1)
+})
+
+// Field #3: the 375px "mobile" leg used to run mobile:false, deviceScaleFactor:1 — a
+// desktop window squeezed narrow, not a phone — so touch-target rules got enforced on
+// non-touch emulation. Pins the real contract: ≤500px wide emulates a phone (DPR 2,
+// touch), wider stays exactly as before. mobile:true ALONE does not flip hover/pointer
+// media features or touch feature detection (verified empirically against Chrome 150
+// headless) — Emulation.setTouchEmulationEnabled is required, this is what pins it.
+async function touchInfo(url: string, viewport: { width: number; height: number }) {
+  return withPage(url, async (client) => {
+    const { result } = await client.Runtime.evaluate({
+      expression: `JSON.stringify({ dpr: window.devicePixelRatio, coarse: matchMedia('(pointer: coarse)').matches, maxTouchPoints: navigator.maxTouchPoints })`,
+    })
+    return JSON.parse(result.value)
+  }, { viewport })
+}
+
+test('viewports <=500px wide emulate a real phone (DPR 2, coarse pointer, touch); wider viewports are unaffected', async () => {
+  const url = `${srv.url}/basic/index.html`
+  expect(await touchInfo(url, { width: 375, height: 800 })).toEqual({ dpr: 2, coarse: true, maxTouchPoints: 1 })
+  expect(await touchInfo(url, { width: 500, height: 800 })).toEqual({ dpr: 2, coarse: true, maxTouchPoints: 1 })
+  expect(await touchInfo(url, { width: 501, height: 800 })).toEqual({ dpr: 1, coarse: false, maxTouchPoints: 0 })
+  expect(await touchInfo(url, { width: 1280, height: 800 })).toEqual({ dpr: 1, coarse: false, maxTouchPoints: 0 })
+})
+
+test('setDesktopOnly(true) restores the old squeezed-desktop emulation at every width (escape hatch)', async () => {
+  setDesktopOnly(true)
+  try {
+    expect(await touchInfo(`${srv.url}/basic/index.html`, { width: 375, height: 800 }))
+      .toEqual({ dpr: 1, coarse: false, maxTouchPoints: 0 })
+  } finally {
+    setDesktopOnly(false) // must not leak into later tests
+  }
 })
 
 test('unreachable Chrome on explicit bad port gives actionable error', async () => {

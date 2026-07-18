@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { DEFAULT_SWEEP, forEachViewport, layoutNeverSettled, parseViewport, parseViewportList, setAttachMode, shutdownChrome, withPage, type Viewport } from './core/connect.js'
+import { DEFAULT_SWEEP, forEachViewport, layoutNeverSettled, parseViewport, parseViewportList, setAttachMode, setDesktopOnly, shutdownChrome, withPage, type Viewport } from './core/connect.js'
 import { extract } from './core/extract.js'
 import { buildTree, findNode, renderTree } from './core/tree.js'
 import { checkInvariants, checkWithPersistence, renderViolations } from './core/invariants.js'
@@ -174,7 +174,11 @@ const USAGE = `csstruth <command> <url> [options]
                                                 --scroll-to/--hover/--focus/--active/--viewports
   options: --attach (use your own Chrome on port 9222 — e.g. logged-in pages — instead of
              launching an isolated headless instance); --port N (attach to Chrome at port N)
-           --viewport WxH (emulated viewport size, e.g. 1280x800)
+           --viewport WxH (emulated viewport size, e.g. 1280x800) — any viewport ≤500px
+             wide (the sweep's 375 leg included) emulates a real phone: mobile:true,
+             deviceScaleFactor:2, touch enabled — not a desktop window squeezed narrow.
+             Bounds are still reported in CSS px regardless. --desktop-only forces the
+             old squeezed-desktop emulation (mobile:false, DPR 1) at every width
            --viewports W1xH1,W2xH2,... (check/snapshot/diff/verify/baseline once per viewport)
            --hover S, --focus S, --active S (force a pseudo-state on selector S;
              layout/inspect/explain/check/verify/baseline only, not snapshot/diff)
@@ -254,6 +258,11 @@ async function main(): Promise<number> {
   // an isolated headless launch. Global boolean flag (present anywhere in argv), not a value
   // flag, so it composes with every command's own arg parsing without threading.
   if (process.argv.includes('--attach')) setAttachMode(true)
+
+  // --desktop-only escape hatch (field #3): viewports ≤500px CSS px now emulate a real
+  // phone (mobile:true, DPR 2) by default; this restores the old squeezed-desktop
+  // emulation everywhere, for callers that relied on the exact prior geometry.
+  if (process.argv.includes('--desktop-only')) setDesktopOnly(true)
 
   // Every command except watch (which owns its own SIGINT/SIGTERM exit-0 contract, armed
   // inside watch() itself) gets this shared safety net: an unhandled Ctrl+C mid-check/

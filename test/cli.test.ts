@@ -61,6 +61,19 @@ test('layout --viewport WxH emulates the given viewport', async () => {
   expect(stdout).toContain('body (0,0 500x')
 }, 60_000)
 
+// Field #3 escape hatch: mobile-viewport/index.html has no <meta name=viewport>, so a
+// true mobile 375px capture renders at Chrome's real ~980px fallback (div.fixed is
+// 500px wide, fits — clean); --desktop-only forces the OLD squeezed-desktop 375px
+// emulation everywhere, where the same 500px div genuinely overflows.
+test('--desktop-only restores the old squeezed-desktop emulation, changing the verdict on a non-viewport-tagged page', async () => {
+  const { stdout } = await cli('check', `${srv.url}/mobile-viewport/index.html`, '--viewport', '375x800')
+  expect(stdout).toContain('no violations')
+
+  const err = await cli('check', `${srv.url}/mobile-viewport/index.html`, '--viewport', '375x800', '--desktop-only').catch((e) => e)
+  expect(err.code).toBe(1)
+  expect(err.stdout).toContain('viewport-overflow')
+}, 60_000)
+
 test('--viewport with a malformed value exits 2', async () => {
   const err = await cli('layout', `${srv.url}/basic/index.html`, '--viewport', 'nope').catch((e) => e)
   expect(err.code).toBe(2)
@@ -170,7 +183,13 @@ test('verify defaults to the standard sweep, verdict first, [WxH] violations, cl
   const err = await cli('verify', `${srv.url}/responsive/index.html`).catch((e) => e)
   expect(err.code).toBe(1)
   expect(err.stdout.split('\n')[0]).toMatch(/^VERDICT: FAIL/)
-  expect(err.stdout).toContain('[375x800] viewport-overflow')
+  // Field #3 browser truth: the 375 leg now runs true mobile emulation. With the
+  // fixture's width=device-width meta tag, the body clamps to 375px and the 720px
+  // div bleeds OUT of it (parent-bleed) — under the old squeezed-desktop emulation
+  // the document instead expanded to 720px and the div overflowed the viewport
+  // (viewport-overflow). Same real bug at 375px, reclassified by real meta-viewport
+  // rendering; still VERDICT: FAIL, exit 1.
+  expect(err.stdout).toContain('[375x800] parent-bleed')
   expect(err.stdout).toContain('1280x800=clean')
 }, 60_000)
 

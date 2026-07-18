@@ -31,6 +31,17 @@ const busyPages = new WeakSet<object>()
 let attachTo9222 = false
 export function setAttachMode(on: boolean): void { attachTo9222 = on }
 
+// Field #3: the 375px "mobile" leg of the default sweep used to run mobile:false,
+// deviceScaleFactor:1 — a desktop window squeezed narrow, not a phone. Touch-target
+// rules got enforced on non-touch emulation, and <meta viewport>/DPR-sensitive
+// rendering never got exercised. --desktop-only (CLI) restores the old squeeze
+// everywhere, same module-level-setter shape as --attach above.
+let desktopOnly = false
+export function setDesktopOnly(on: boolean): void { desktopOnly = on }
+// Phones top out around ~430 CSS px (iPhone Pro Max); 500 is a safe cutoff that still
+// excludes small tablets/foldables, which behave like desktop (mobile:false, DPR 1).
+const MOBILE_WIDTH_MAX = 500
+
 // Populated only when withPage's captureAnimations opt is set (src/core/animate.ts's
 // settleAnimations reads this). Animation.animationStarted events carry
 // animation.source.duration/delay/iterations — that's the only place seekable timing
@@ -173,7 +184,15 @@ export async function withPage<T>(
     await client.Page.enable()
     await client.Network.enable()
     const vp = opts.viewport ?? { width: 1280, height: 800 }
-    await client.Emulation.setDeviceMetricsOverride({ ...vp, deviceScaleFactor: 1, mobile: false })
+    // Narrow viewports emulate a real phone (mobile:true, DPR 2) instead of a squeezed
+    // desktop window — extract.ts's normalizeBounds already divides DOMSnapshot bounds
+    // back to CSS px regardless of DPR, so this only changes <meta viewport> fallback
+    // behavior and touch semantics, exactly the field-test gap. mobile:true alone does
+    // NOT flip hover/pointer media features or touch feature detection (verified
+    // empirically against Chrome 150 headless) — setTouchEmulationEnabled is required.
+    const mobile = !desktopOnly && vp.width <= MOBILE_WIDTH_MAX
+    await client.Emulation.setDeviceMetricsOverride({ ...vp, deviceScaleFactor: mobile ? 2 : 1, mobile })
+    if (mobile) await client.Emulation.setTouchEmulationEnabled({ enabled: true })
     if (opts.beforeNavigate) await opts.beforeNavigate(client)
     await navigate(client, url)
     if (opts.captureAnimations) {

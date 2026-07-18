@@ -107,6 +107,18 @@ A baseline's viewport labeling must match what it's compared against:
 capture and compare with the same `viewports` (or neither side passes it).
 Without `baseline`, `check`/`verify` behave exactly as before.
 
+## Mobile emulation
+
+Any viewport ≤500px wide (the default sweep's 375 leg included) renders as a
+real phone: `mobile: true`, `deviceScaleFactor: 2`, touch enabled — not a
+desktop window squeezed narrow. So `<meta viewport>` fallback, coarse-pointer/
+hover media queries, and touch feature detection all behave as they do on a
+phone. Reported geometry stays in CSS px regardless of DPR, so a static page's
+boxes are unchanged from before — only genuinely mobile-specific rendering
+differs (a page missing `<meta name=viewport>` renders at the ~980px desktop
+fallback, exactly as a real phone would). Pass the CLI `--desktop-only` flag to
+force the old squeezed-desktop emulation (`mobile: false`, DPR 1) everywhere.
+
 ## Chrome
 
 Tools launch their own isolated headless Chrome by default (they won't touch a
