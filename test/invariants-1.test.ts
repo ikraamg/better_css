@@ -23,6 +23,24 @@ test('viewport-overflow: names the culprit and the amount', async () => {
   expect(renderTree(tree)).toContain('⚠H-OVERFLOW')
 })
 
+// Field #3 regression guard: under true mobile emulation Chrome inflates the LAYOUT
+// viewport to content width, so sourcing the overflow denominator from it makes
+// contentWidth - viewport read 0 and viewport-overflow silently never fire at mobile
+// widths. The mobile-overflow fixture's culprit is an absolutely-positioned wide
+// element — parent-bleed structurally skips absolute/fixed children, so this overflow
+// can ONLY be caught by viewport-overflow (no incidental parent-bleed coverage). The
+// denominator must come from the VISUAL viewport (stays clamped to 375).
+test('viewport-overflow still fires at mobile widths when the overflow is not a direct-parent bleed', async () => {
+  const { violations } = await withPage(`${srv.url}/mobile-overflow/index.html`, async (c) => {
+    return { violations: checkInvariants(buildTree(await extract(c))) }
+  }, { viewport: { width: 375, height: 800 } })
+  const v = violations.find((v) => v.rule === 'viewport-overflow')
+  expect(v?.selector).toBe('div.escapee')
+  // proof the coverage isn't leaking through parent-bleed: the absolute escapee is not
+  // flagged as a bleed (positioned children escape their parent on purpose)
+  expect(violations.some((v) => v.rule === 'parent-bleed' && v.selector === 'div.escapee')).toBe(false)
+})
+
 test('parent-bleed: flags static child exceeding parent, not scroll containers', async () => {
   const { violations, tree } = await violationsFor('/bleed/index.html')
   const bleeds = violations.filter((v) => v.rule === 'parent-bleed')

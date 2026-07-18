@@ -58,12 +58,21 @@ export async function extract(client: any): Promise<RawSnapshot> {
   const snap = await DOMSnapshot.captureSnapshot({ computedStyles: [...STYLE_WHITELIST] })
   const metrics = await Page.getLayoutMetrics()
   normalizeBounds(snap.documents, boundsScale(metrics))
-  const vp = metrics.cssLayoutViewport
+  // Visual, NOT layout, viewport: under mobile emulation Chrome inflates the LAYOUT
+  // viewport to full content width (the pannable canvas — e.g. 720/1400 for an
+  // overflowing page), while the VISUAL viewport stays clamped to the actual visible
+  // width (375). Sourcing the overflow denominator from the layout viewport makes
+  // contentWidth - viewport read 0, so viewport-overflow silently never fires at mobile
+  // widths. At desktop the two are identical, so this is a no-op there. cssContentSize
+  // stays the true content extent (the overflow numerator we want). Round to match
+  // contentWidth/Height and to keep the fractional visual-viewport values Chrome can
+  // return (e.g. 980.00006 at the no-meta-tag fallback) out of pinned output.
+  const vp = metrics.cssVisualViewport
   const cs = metrics.cssContentSize
   return {
     documents: snap.documents,
     strings: snap.strings,
-    viewport: { width: vp.clientWidth, height: vp.clientHeight },
+    viewport: { width: Math.round(vp.clientWidth), height: Math.round(vp.clientHeight) },
     contentWidth: Math.round(cs.width),
     contentHeight: Math.round(cs.height),
   }

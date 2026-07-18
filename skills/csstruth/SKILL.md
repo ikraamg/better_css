@@ -114,9 +114,10 @@ real phone: `mobile: true`, `deviceScaleFactor: 2`, touch enabled — not a
 desktop window squeezed narrow. So `<meta viewport>` fallback, coarse-pointer/
 hover media queries, and touch feature detection all behave as they do on a
 phone. Reported geometry stays in CSS px regardless of DPR, so a static page's
-boxes are unchanged from before — only genuinely mobile-specific rendering
-differs (a page missing `<meta name=viewport>` renders at the ~980px desktop
-fallback, exactly as a real phone would). Pass the CLI `--desktop-only` flag to
+element boxes are unchanged from before and overflow/tap-target detection is
+fully preserved. What legitimately changes is genuinely mobile-specific
+rendering — a page missing `<meta name=viewport>` renders at the ~980px desktop
+fallback, exactly as a real phone would. Pass the CLI `--desktop-only` flag to
 force the old squeezed-desktop emulation (`mobile: false`, DPR 1) everywhere.
 
 ## Chrome

@@ -179,10 +179,12 @@ emulated as a **real phone** (`mobile: true`, `deviceScaleFactor: 2`, touch
 enabled), not a desktop window squeezed narrow. This exercises the actual
 mobile render: `<meta viewport>` fallback behavior, coarse-pointer/hover media
 queries, and touch feature detection. Reported geometry stays in CSS px
-regardless of the device pixel ratio, so a static page's boxes are byte-
-identical to the old emulation — only genuinely mobile-specific rendering
-differs. Pass `--desktop-only` to force the old squeezed-desktop emulation
-(`mobile: false`, DPR 1) at every width.
+regardless of the device pixel ratio, so a static page's element boxes are
+byte-identical to the old emulation, and overflow/tap-target detection is fully
+preserved. What legitimately changes is genuinely mobile-specific rendering — a
+page missing `<meta name=viewport>` renders at the ~980px desktop fallback, as a
+real phone would. Pass `--desktop-only` to force the old squeezed-desktop
+emulation (`mobile: false`, DPR 1) at every width.
 
 ## Use as an MCP server (the agent loop)
 

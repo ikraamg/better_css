@@ -49,9 +49,9 @@ test('static-page geometry is unchanged by mobile emulation alone (bounds stay C
   const url = `${srv.url}/responsive/index.html`
   const viewport = { width: 375, height: 800 }
 
+  let desktop
   setDesktopOnly(true)
-  const desktop = await withPage(url, extract, { viewport })
-  setDesktopOnly(false)
+  try { desktop = await withPage(url, extract, { viewport }) } finally { setDesktopOnly(false) }
   const mobile = await withPage(url, extract, { viewport })
 
   expect(divBounds(desktop)).toEqual([0, 0, 720, 50])
@@ -67,9 +67,9 @@ test('a fixture without <meta name=viewport> renders at the real mobile fallback
   const url = `${srv.url}/mobile-viewport/index.html`
   const viewport = { width: 375, height: 800 }
 
+  let desktop
   setDesktopOnly(true)
-  const desktop = await withPage(url, extract, { viewport })
-  setDesktopOnly(false)
+  try { desktop = await withPage(url, extract, { viewport }) } finally { setDesktopOnly(false) }
   const mobile = await withPage(url, extract, { viewport })
 
   // old squeeze: a desktop window forced to 375 CSS px, no viewport-meta involved

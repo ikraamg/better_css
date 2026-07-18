@@ -1,0 +1,11 @@
+<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><style>
+* { margin: 0; }
+.wrap { width: 300px; height: 50px; background: #eee; }
+/* absolutely positioned wide element: parent-bleed structurally skips absolute/fixed
+   children, so this horizontal overflow can ONLY be caught by viewport-overflow —
+   isolates the check from any incidental parent-bleed coverage. */
+.escapee { position: absolute; top: 60px; left: 0; width: 900px; height: 50px; background: tomato; }
+</style></head><body>
+<div class="wrap"></div>
+<div class="escapee"></div>
+</body></html>

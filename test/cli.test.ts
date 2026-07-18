@@ -183,13 +183,12 @@ test('verify defaults to the standard sweep, verdict first, [WxH] violations, cl
   const err = await cli('verify', `${srv.url}/responsive/index.html`).catch((e) => e)
   expect(err.code).toBe(1)
   expect(err.stdout.split('\n')[0]).toMatch(/^VERDICT: FAIL/)
-  // Field #3 browser truth: the 375 leg now runs true mobile emulation. With the
-  // fixture's width=device-width meta tag, the body clamps to 375px and the 720px
-  // div bleeds OUT of it (parent-bleed) — under the old squeezed-desktop emulation
-  // the document instead expanded to 720px and the div overflowed the viewport
-  // (viewport-overflow). Same real bug at 375px, reclassified by real meta-viewport
-  // rendering; still VERDICT: FAIL, exit 1.
-  expect(err.stdout).toContain('[375x800] parent-bleed')
+  // The 375 leg runs true mobile emulation. viewport-overflow must still fire: the
+  // page's content is 720px against a 375px visual viewport. (Under mobile emulation
+  // Chrome inflates the *layout* viewport to content width — extract.ts must source the
+  // overflow denominator from the *visual* viewport, which stays clamped to 375, or the
+  // overflow silently reads 0 and detection is lost.)
+  expect(err.stdout).toContain('[375x800] viewport-overflow')
   expect(err.stdout).toContain('1280x800=clean')
 }, 60_000)
 
