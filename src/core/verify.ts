@@ -2,6 +2,7 @@ import { forEachViewport, layoutNeverSettled, pageWasBusy, type Viewport } from 
 import { extract } from './extract.js'
 import { buildTree, renderTree } from './tree.js'
 import { checkInvariants, renderViolations, violationKey } from './invariants.js'
+import { aggregateBaselineSummary, diffBaseline, renderBaselineNote, type BaselineSummary } from './baseline.js'
 import { diffTrees, loadSnapshot, renderDiff } from './snapshot.js'
 import { forcePseudoStates, type PseudoStates } from './state.js'
 import { assertNoInteractNavigation, hasInteractSteps, interactWasUnsettled, runInteractSteps, type InteractSteps } from './interact.js'
@@ -39,7 +40,7 @@ function diffOrNote(
   return { rendered: renderDiff(entries), changes: entries.length }
 }
 
-export interface VerifyOpts { port?: number; states?: PseudoStates; interact?: InteractSteps; animate?: AnimateOpts; name?: string; dir?: string }
+export interface VerifyOpts { port?: number; states?: PseudoStates; interact?: InteractSteps; animate?: AnimateOpts; name?: string; dir?: string; baseline?: Set<string> }
 
 // Composite: check + (optional) diff, per viewport, in input order — verify is ALWAYS a
 // matrix, even with one viewport (snapshot files are always named <name>@WxH, never plain
@@ -53,7 +54,7 @@ export interface VerifyOpts { port?: number; states?: PseudoStates; interact?: I
 // load covers both.
 export async function verifyMatrix(
   url: string, viewports: Viewport[], opts: VerifyOpts,
-): Promise<{ output: string; dirty: boolean }> {
+): Promise<{ output: string; dirty: boolean; baselineSummary?: BaselineSummary }> {
   const modified = Boolean(opts.states) || hasInteractSteps(opts.interact)
   const checked = await forEachViewport(url, viewports, async (client, vp) => {
     await runInteractSteps(client, opts.interact ?? {}, { skipSettleWait: needsAnimationCapture(opts.animate ?? {}) })
@@ -76,14 +77,21 @@ export async function verifyMatrix(
     // interact.ts).
     assertNoInteractNavigation(client)
     const persistenceNote = persistenceFiltered ? '\nnote: page never settled — reporting only violations stable across two captures' : ''
-    let block = (await renderViolations(client, violations)) + persistenceNote + busyNote(client)
+    // Field #6: baseline compares the persistence-filtered set above — composes with
+    // Field #1 for free. Without --baseline, delta is undefined and every branch below
+    // falls through to the un-baselined value (byte-identical to today).
+    const delta = opts.baseline ? diffBaseline(opts.baseline, vp.label, violations) : undefined
+    const toRender = delta ? delta.newViolations : violations
+    const baselineNote = delta ? renderBaselineNote(delta) : ''
+    const count = delta ? delta.newViolations.length : violations.length
+    let block = (await renderViolations(client, toRender)) + (baselineNote ? `\n${baselineNote}` : '') + persistenceNote + busyNote(client)
     let changes = 0
     if (opts.name && !modified) {
       const d = diffOrNote(opts.name, vp.label, opts.dir, renderTree(tree))
       block += `\n${d.rendered}`
       changes = d.changes
     }
-    return { violations: violations.length, block, changes, neverSettled: persistenceFiltered }
+    return { count, delta, block, changes, neverSettled: persistenceFiltered }
   }, { port: opts.port, captureAnimations: needsAnimationCapture(opts.animate ?? {}) })
 
   let diffed: Array<{ label: string; result: { rendered: string; changes: number } }> | undefined
@@ -98,10 +106,10 @@ export async function verifyMatrix(
     }, { port: opts.port, captureAnimations: Boolean(opts.animate?.settled) })
   }
 
-  let totalViolations = 0
+  let totalNew = 0
   let totalChanges = 0
   const blocks = checked.map((c, i) => {
-    totalViolations += c.result.violations
+    totalNew += c.result.count
     let block = c.result.block
     if (diffed) {
       block += `\n${diffed[i].result.rendered}`
@@ -113,18 +121,34 @@ export async function verifyMatrix(
   })
 
   const summary = checked
-    .map((c) => `${c.label}=${c.result.violations ? `${c.result.violations} violations` : 'clean'}`)
+    .map((c) => `${c.label}=${c.result.count ? `${c.result.count} violations` : 'clean'}`)
     .join(', ')
-  const dirty = totalViolations > 0 || totalChanges > 0
+  const dirty = totalNew > 0 || totalChanges > 0
   // Field #1, contract 2c: at least one viewport never settled — never a confident FAIL
   // on possibly-mid-render truth, even though the (already persistence-filtered)
   // violations are still real enough to keep exit code 1.
   const anyNeverSettled = checked.some((c) => c.result.neverSettled)
-  const verdict = dirty
-    ? (anyNeverSettled
-      ? `VERDICT: INCONCLUSIVE (page never settled; ${totalViolations} persistent violations)`
-      : `VERDICT: FAIL (${totalViolations} violations across ${viewports.length} viewports${totalChanges ? `, ${totalChanges} layout changes` : ''})`)
-    : (anyNeverSettled ? 'VERDICT: PASS (page never fully settled)' : 'VERDICT: PASS')
+  // Field #6: with a baseline, the delta decides — (resolved, new, baseline) counts replace
+  // the raw total everywhere it appears in the verdict, and PASS gains a parenthetical even
+  // when nothing is dirty (a baselined violation with nothing new/resolved is still worth
+  // naming). Without --baseline this whole branch is unreachable — byte-identical to today.
+  const verdict = opts.baseline
+    ? (() => {
+      const totalResolved = checked.reduce((n, c) => n + (c.result.delta?.resolvedKeys.length ?? 0), 0)
+      const totalBaseline = checked.reduce((n, c) => n + (c.result.delta?.unchangedCount ?? 0), 0)
+      const counts = `${totalResolved} resolved, ${totalNew} new, ${totalBaseline} baseline`
+      return dirty
+        ? (anyNeverSettled
+          ? `VERDICT: INCONCLUSIVE (page never settled; ${counts})`
+          : `VERDICT: FAIL (${counts}${totalChanges ? `, ${totalChanges} layout changes` : ''})`)
+        : (anyNeverSettled ? `VERDICT: PASS (page never fully settled; ${counts})` : `VERDICT: PASS (${counts})`)
+    })()
+    : (dirty
+      ? (anyNeverSettled
+        ? `VERDICT: INCONCLUSIVE (page never settled; ${totalNew} persistent violations)`
+        : `VERDICT: FAIL (${totalNew} violations across ${viewports.length} viewports${totalChanges ? `, ${totalChanges} layout changes` : ''})`)
+      : (anyNeverSettled ? 'VERDICT: PASS (page never fully settled)' : 'VERDICT: PASS'))
   const output = `${verdict}\n${blocks.join('\n')}\nchecked ${checked.length} viewports: ${summary}`
-  return { output, dirty }
+  const baselineSummary = opts.baseline ? aggregateBaselineSummary(checked.map((c) => c.result.delta!)) : undefined
+  return { output, dirty, baselineSummary }
 }

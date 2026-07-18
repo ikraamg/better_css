@@ -2,6 +2,7 @@ import { forEachViewport, layoutNeverSettled, pageWasBusy, type Viewport } from 
 import { extract } from './extract.js'
 import { buildTree, renderTree } from './tree.js'
 import { checkInvariants, checkWithPersistence, renderViolations } from './invariants.js'
+import { aggregateBaselineSummary, diffBaseline, renderBaselineNote, type BaselineSummary } from './baseline.js'
 import { diffTrees, loadSnapshot, renderDiff, saveSnapshot } from './snapshot.js'
 import { forcePseudoStates, type PseudoStates } from './state.js'
 import { assertNoInteractNavigation, interactWasUnsettled, runInteractSteps, type InteractSteps } from './interact.js'
@@ -34,9 +35,9 @@ function busyNote(client: object): string {
 // selector matching zero DOM nodes anywhere is always the actual error.
 export async function checkMatrix(
   url: string, viewports: Viewport[],
-  opts: { port?: number; states?: PseudoStates; interact?: InteractSteps; animate?: AnimateOpts },
-): Promise<{ output: string; dirty: boolean }> {
-  const results = await forEachViewport(url, viewports, async (client) => {
+  opts: { port?: number; states?: PseudoStates; interact?: InteractSteps; animate?: AnimateOpts; baseline?: Set<string> },
+): Promise<{ output: string; dirty: boolean; baselineSummary?: BaselineSummary }> {
+  const results = await forEachViewport(url, viewports, async (client, vp) => {
     await runInteractSteps(client, opts.interact ?? {}, { skipSettleWait: needsAnimationCapture(opts.animate ?? {}) })
     await settleAnimations(client, opts.animate ?? {})
     if (opts.states) await forcePseudoStates(client, opts.states)
@@ -47,14 +48,22 @@ export async function checkMatrix(
     // interact.ts).
     assertNoInteractNavigation(client)
     const persistenceNote = persistenceFiltered ? '\nnote: page never settled — reporting only violations stable across two captures' : ''
-    return { violations, rendered: (await renderViolations(client, violations)) + persistenceNote + busyNote(client) }
+    // Field #6: without a baseline, byte-identical to today — delta is undefined and every
+    // branch below falls through to the un-baselined value.
+    const delta = opts.baseline ? diffBaseline(opts.baseline, vp.label, violations) : undefined
+    const toRender = delta ? delta.newViolations : violations
+    const baselineNote = delta ? renderBaselineNote(delta) : ''
+    const count = delta ? delta.newViolations.length : violations.length
+    const rendered = (await renderViolations(client, toRender)) + (baselineNote ? `\n${baselineNote}` : '') + persistenceNote + busyNote(client)
+    return { count, delta, rendered }
   }, { ...opts, captureAnimations: needsAnimationCapture(opts.animate ?? {}) })
   const body = results.map((r) => prefixLines(r.label, r.result.rendered)).join('\n')
   const summary = results
-    .map((r) => `${r.label}=${r.result.violations.length ? `${r.result.violations.length} violations` : 'clean'}`)
+    .map((r) => `${r.label}=${r.result.count ? `${r.result.count} violations` : 'clean'}`)
     .join(', ')
-  const dirty = results.some((r) => r.result.violations.length > 0)
-  return { output: `${body}\nchecked ${results.length} viewports: ${summary}`, dirty }
+  const dirty = results.some((r) => r.result.count > 0)
+  const baselineSummary = opts.baseline ? aggregateBaselineSummary(results.map((r) => r.result.delta!)) : undefined
+  return { output: `${body}\nchecked ${results.length} viewports: ${summary}`, dirty, baselineSummary }
 }
 
 // snapshot, once per viewport → `<name>@WxH.tree` per file (plain saveSnapshot naming,

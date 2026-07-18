@@ -2,10 +2,11 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
-import { DEFAULT_SWEEP, layoutNeverSettled, pageWasBusy, parseViewport, parseViewportList, shutdownChrome, withPage } from './core/connect.js'
+import { DEFAULT_SWEEP, forEachViewport, layoutNeverSettled, pageWasBusy, parseViewport, parseViewportList, shutdownChrome, withPage } from './core/connect.js'
 import { extract } from './core/extract.js'
 import { buildTree, findNode, renderTree } from './core/tree.js'
 import { checkInvariants, checkWithPersistence, renderViolations } from './core/invariants.js'
+import { baselineKey, diffBaseline, loadBaselineFile, renderBaselineNote, renderBaselineUpdate, writeBaselineFile } from './core/baseline.js'
 import { explain, renderExplanation } from './core/explain.js'
 import { inspect } from './core/inspect.js'
 import { diffTrees, loadSnapshot, renderDiff, saveSnapshot } from './core/snapshot.js'
@@ -115,16 +116,38 @@ server.tool('explain', 'Trace one CSS property to its source: which rule wins (f
   ({ url: u, port: p, viewport: v, selector, property, hover: h, focus: fo, active: a, click: cl, scrollTo: st, settled: se, atTime: at }) => page(u, { port: p, viewport: v, states: { hover: h, focus: fo, active: a }, interact: { click: cl, scrollTo: st }, animate: { settled: se, atTime: at } }, async (client) =>
     renderExplanation(await explain(client, selector, property))))
 
-server.tool('check', 'Run layout invariants (overflow, bleed, clipped text, unintended overlap, zero-size/tiny interactive elements). Violations are ALWAYS bugs — fix them. Pass scrollTo/click to interact with the page first (order: scrollTo, then click(s), then settle), then settled/atTime to fast-forward or seek animations, then hover/focus/active to see the layout consequences of interaction states without a mouse — combinable with viewports, re-running scrollTo/click(s)/settled/state fresh inside each one.',
-  { url, port, viewport, viewports, hover, focus, active, click, scrollTo, settled, atTime },
-  ({ url: u, port: p, viewport: v, viewports: vs, hover: h, focus: fo, active: a, click: cl, scrollTo: st, settled: se, atTime: at }) => vs
-    ? checkMatrix(u, parseViewportList(vs), { port: p, states: { hover: h, focus: fo, active: a }, interact: { click: cl, scrollTo: st }, animate: { settled: se, atTime: at } }).then((r) => text(r.output))
-    : page(u, { port: p, viewport: v, states: { hover: h, focus: fo, active: a }, interact: { click: cl, scrollTo: st }, animate: { settled: se, atTime: at } }, async (client) => {
+const baselineParam = z.string().optional().describe("Path to a baseline file (written by the baseline tool). Violations whose (viewport?, rule, selector) key is already IN the file collapse to a 'baseline: N accepted violations unchanged' line; only NEW violations are itemized and drive the verdict, RESOLVED ones (in the file, no longer present) are itemized as 'resolved: <rule> <selector>' — the delta decides, not the raw count. The viewport is only part of the key when viewports was given to the baseline tool too — pair capture and comparison the same way. Missing file throws.")
+const updateBaselineParam = z.boolean().optional().describe('Rewrite the baseline file to the current violation set after this call (adopting intentional changes) — appends what was added/removed. Requires baseline.')
+
+server.tool('check', 'Run layout invariants (overflow, bleed, clipped text, unintended overlap, zero-size/tiny interactive elements). Violations are ALWAYS bugs — fix them. Pass scrollTo/click to interact with the page first (order: scrollTo, then click(s), then settle), then settled/atTime to fast-forward or seek animations, then hover/focus/active to see the layout consequences of interaction states without a mouse — combinable with viewports, re-running scrollTo/click(s)/settled/state fresh inside each one. Pass baseline to report only NEW/RESOLVED violations against a file written by the baseline tool, instead of an all-or-nothing list — the fix for a page that is not, and may never be, fully clean.',
+  { url, port, viewport, viewports, hover, focus, active, click, scrollTo, settled, atTime, baseline: baselineParam, updateBaseline: updateBaselineParam },
+  ({ url: u, port: p, viewport: v, viewports: vs, hover: h, focus: fo, active: a, click: cl, scrollTo: st, settled: se, atTime: at, baseline, updateBaseline }) => {
+    const baselineSet = baseline !== undefined ? loadBaselineFile(baseline) : undefined
+    if (vs) {
+      return checkMatrix(u, parseViewportList(vs), { port: p, states: { hover: h, focus: fo, active: a }, interact: { click: cl, scrollTo: st }, animate: { settled: se, atTime: at }, baseline: baselineSet }).then((r) => {
+        let out = r.output
+        if (updateBaseline && r.baselineSummary) {
+          writeBaselineFile(baseline!, r.baselineSummary.allCurrent)
+          out += `\n${renderBaselineUpdate(baseline!, r.baselineSummary)}`
+        }
+        return text(out)
+      })
+    }
+    return page(u, { port: p, viewport: v, states: { hover: h, focus: fo, active: a }, interact: { click: cl, scrollTo: st }, animate: { settled: se, atTime: at } }, async (client) => {
       const capture = async () => checkInvariants(buildTree(await extract(client)))
       const { violations, persistenceFiltered } = await checkWithPersistence(layoutNeverSettled(client), capture)
-      return (await renderViolations(client, violations)) +
+      const delta = baselineSet ? diffBaseline(baselineSet, undefined, violations) : undefined
+      const toRender = delta ? delta.newViolations : violations
+      const baselineNote = delta ? renderBaselineNote(delta) : ''
+      let out = (await renderViolations(client, toRender)) + (baselineNote ? `\n${baselineNote}` : '') +
         (persistenceFiltered ? '\nnote: page never settled — reporting only violations stable across two captures' : '')
-    }))
+      if (updateBaseline && delta) {
+        writeBaselineFile(baseline!, delta.currentKeys)
+        out += `\n${renderBaselineUpdate(baseline!, { added: delta.addedKeys, removed: delta.resolvedKeys, allCurrent: delta.currentKeys })}`
+      }
+      return out
+    })
+  })
 
 server.tool('fix', 'Propose (default) or APPLY mechanical patches for fixable violations (text-clip, tap-target, viewport-overflow/parent-bleed with a fixed px width) — everything else reports "no mechanical fix for <rule> — see suspect". DRY-RUN unless apply=true: prints one unified-diff-style hunk per fixable violation (file:line, -/+ lines) and writes nothing. apply=true EDITS FILES ON DISK, confined to root (path traversal from a suspect stylesheet URL is rejected — resolved and verified to stay inside root); each patch is guarded by a stale-source check (refuses a patch whose expected declaration text has drifted from where it was last seen, tolerating small line shifts — other patches in the same call still apply). After applying, automatically re-runs check and reports "before: N violations -> after: M violations" plus any NEW violations the patch introduced (regression honesty) — isError is set unless the fix strictly improved things (M < N and no new violations). When NOTHING was fixable, apply=true returns "no patches applied" with no error and no re-check (nothing attempted is not failure). selector limits which violations are attempted (substring match against the rendered selector). Inline <style>/style= suspects are never patchable — refused, with the page:line to hand-edit instead. Pass scrollTo/click/settled/atTime/hover/focus/active exactly as for check. viewports (matrix) is NOT supported — apply writes once per call; pass viewport (singular) or call fix again per viewport.',
   {
@@ -207,17 +230,60 @@ server.tool('diff', 'Structural diff of the current layout vs a named snapshot: 
       })
   })
 
-server.tool('verify', `Composite one-shot "is this page correct": runs layout invariants and, if a name is given, also diffs a locked snapshot — across a viewport sweep, in a single call. FIRST line of the output is always VERDICT: PASS or VERDICT: FAIL (violations + layout changes), so you can branch on line 1 without parsing details. Defaults to the ${DEFAULT_SWEEP} sweep when viewports is omitted — verify always runs as a matrix, even with one viewport, so snapshot files are always named <name>@WxH (never plain <name>.tree). Pass scrollTo/click to interact with the page first (order: scrollTo, then click(s), then settle), then settled/atTime to fast-forward or seek animations, then hover/focus/active to see the layout consequences of interaction states without a mouse. settled is RECOMMENDED whenever the page has animations — the default behavior is unchanged (no seeking) otherwise. IMPORTANT: states, interact steps, and atTime affect the invariant check only — the snapshot diff always compares the resting (unforced, un-interacted, not-pinned-to-a-frame) layout, applying settled if given (since diffing a forced/interacted layout against a resting snapshot would always report a change); this costs a second page load per viewport when states/interact are combined with name. A missing per-viewport snapshot is reported as a note, not a failure (snapshot only the viewports you care about).`,
-  { url, port, viewports, hover, focus, active, click, scrollTo, settled, atTime, name: z.string().optional(), dir: z.string().optional().describe("Snapshot dir (default .csstruth relative to the MCP server's working directory — pass an absolute path when the server isn't launched from your project root)") },
-  ({ url: u, port: p, viewports: vs, hover: h, focus: fo, active: a, click: cl, scrollTo: st, settled: se, atTime: at, name, dir }) => {
+server.tool('verify', `Composite one-shot "is this page correct": runs layout invariants and, if a name is given, also diffs a locked snapshot — across a viewport sweep, in a single call. FIRST line of the output is always VERDICT: PASS or VERDICT: FAIL (violations + layout changes), so you can branch on line 1 without parsing details. Defaults to the ${DEFAULT_SWEEP} sweep when viewports is omitted — verify always runs as a matrix, even with one viewport, so snapshot files are always named <name>@WxH (never plain <name>.tree). Pass scrollTo/click to interact with the page first (order: scrollTo, then click(s), then settle), then settled/atTime to fast-forward or seek animations, then hover/focus/active to see the layout consequences of interaction states without a mouse. settled is RECOMMENDED whenever the page has animations — the default behavior is unchanged (no seeking) otherwise. IMPORTANT: states, interact steps, and atTime affect the invariant check only — the snapshot diff always compares the resting (unforced, un-interacted, not-pinned-to-a-frame) layout, applying settled if given (since diffing a forced/interacted layout against a resting snapshot would always report a change); this costs a second page load per viewport when states/interact are combined with name. A missing per-viewport snapshot is reported as a note, not a failure (snapshot only the viewports you care about). Pass baseline (a file written by the baseline tool, itself captured with the SAME viewports) to turn the verdict into a delta: "PASS (R resolved, N new, B baseline)" when nothing new broke, exit-worthy only on N > 0 — the fix for adopting verify as a CI gate on a page that isn't fully clean yet.`,
+  {
+    url, port, viewports, hover, focus, active, click, scrollTo, settled, atTime, name: z.string().optional(), dir: z.string().optional().describe("Snapshot dir (default .csstruth relative to the MCP server's working directory — pass an absolute path when the server isn't launched from your project root)"),
+    baseline: baselineParam, updateBaseline: updateBaselineParam,
+  },
+  ({ url: u, port: p, viewports: vs, hover: h, focus: fo, active: a, click: cl, scrollTo: st, settled: se, atTime: at, name, dir, baseline, updateBaseline }) => {
     const hasStates = h !== undefined || fo !== undefined || a !== undefined
     const interact: InteractSteps = { click: cl, scrollTo: st }
     const animate: AnimateOpts = { settled: se, atTime: at }
+    const baselineSet = baseline !== undefined ? loadBaselineFile(baseline) : undefined
     return verifyMatrix(u, parseViewportList(vs ?? DEFAULT_SWEEP), {
       port: p, states: hasStates ? { hover: h, focus: fo, active: a } : undefined,
       interact: hasInteractSteps(interact) ? interact : undefined,
-      animate: needsAnimationCapture(animate) ? animate : undefined, name, dir,
-    }).then((r) => text(r.output))
+      animate: needsAnimationCapture(animate) ? animate : undefined, name, dir, baseline: baselineSet,
+    }).then((r) => {
+      let out = r.output
+      if (updateBaseline && r.baselineSummary) {
+        writeBaselineFile(baseline!, r.baselineSummary.allCurrent)
+        out += `\n${renderBaselineUpdate(baseline!, r.baselineSummary)}`
+      }
+      return text(out)
+    })
+  })
+
+server.tool('baseline', 'Capture the CURRENT violation set (after the same persistence filter check/verify use) and write it to a file: sorted, human-readable, diff-friendly, one line per violation, keyed (viewport?, rule, selector) — px excluded (it drifts run to run). The viewport is only part of the key when viewports is given here — pair with check/verify\'s baseline param by matching viewports (or leaving it off) on both sides, and the SAME hover/focus/active/click/scrollTo/settled/atTime, so the key set lines up. This is field #6\'s CI unblocker: run this once against a page that has known-benign violations, then check/verify --baseline reports only NEW/RESOLVED violations instead of an all-or-nothing PASS/FAIL.',
+  {
+    url, port, viewport, viewports,
+    file: z.string().optional().describe("Baseline file path (default .csstruth-baseline, relative to the MCP server's working directory — pass an absolute path when the server isn't launched from your project root)"),
+    hover, focus, active, click, scrollTo, settled, atTime,
+  },
+  ({ url: u, port: p, viewport: v, viewports: vs, file, hover: h, focus: fo, active: a, click: cl, scrollTo: st, settled: se, atTime: at }) => {
+    const path = file ?? '.csstruth-baseline'
+    const states: PseudoStates = { hover: h, focus: fo, active: a }
+    const interact: InteractSteps = { click: cl, scrollTo: st }
+    const animate: AnimateOpts = { settled: se, atTime: at }
+    const capture = async (client: any) => {
+      await runInteractSteps(client, interact, { skipSettleWait: needsAnimationCapture(animate) })
+      await settleAnimations(client, animate)
+      await forcePseudoStates(client, states)
+      const cap = async () => checkInvariants(buildTree(await extract(client)))
+      const { violations } = await checkWithPersistence(layoutNeverSettled(client), cap)
+      assertNoInteractNavigation(client)
+      return violations
+    }
+    const pageOpts = { port: p, viewport: v ? parseViewport(v) : undefined, captureAnimations: needsAnimationCapture(animate) }
+    return (async () => {
+      const keys = vs
+        ? (await forEachViewport(u, parseViewportList(vs), async (client, vp) =>
+          (await capture(client)).map((vi) => baselineKey(vp.label, vi)), pageOpts)).flatMap((r) => r.result)
+        : await withPage(u, async (client) => (await capture(client)).map((vi) => baselineKey(undefined, vi)), pageOpts)
+      writeBaselineFile(path, keys)
+      const n = new Set(keys).size
+      return text(`baseline written: ${path} (${n} violation${n === 1 ? '' : 's'})`)
+    })()
   })
 
 server.tool('stability', 'Load-time layout-shift report (Cumulative Layout Shift): waits `duration` ms (default 3000) past load, then reports every shift — timing, the moved element\'s selector, its before/after box, and its score — plus any img/video shift source missing width/height attributes (the #1 CLS cause). First line is always STABILITY: <score> (threshold <t>). Score is the raw sum over the observation window; the CWV metric uses session windows — multi-burst pages may score higher here. TIMING-DEPENDENT: this is an OBSERVATION, not a deterministic snapshot — local dev servers under-report; throttle CPU/network to reproduce production shifts. No interact/state/settled params (out of scope) or viewports (single viewport only).',

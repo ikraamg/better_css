@@ -43,10 +43,10 @@ function tmpDir(prefix: string): string {
   return dir
 }
 
-test('lists all ten tools', async () => {
+test('lists all eleven tools', async () => {
   const { tools } = await client.listTools()
   expect(tools.map((t) => t.name).sort())
-    .toEqual(['blame', 'check', 'diff', 'explain', 'fix', 'inspect', 'layout', 'snapshot', 'stability', 'verify'])
+    .toEqual(['baseline', 'blame', 'check', 'diff', 'explain', 'fix', 'inspect', 'layout', 'snapshot', 'stability', 'verify'])
 })
 
 test('layout tool returns the tree', async () => {
@@ -141,6 +141,56 @@ test('verify tool returns verdict-first output for the basic fixture', async () 
   const text = (res.content as any)[0].text
   expect(text.split('\n')[0]).toBe('VERDICT: PASS')
 })
+
+test('baseline tool writes a deterministic file; check/verify baseline param collapses it to a delta verdict', async () => {
+  const dir = tmpDir('csstruth-mcp-baseline-')
+  const file = join(dir, '.csstruth-baseline')
+
+  const written = await client.callTool({
+    name: 'baseline',
+    arguments: { url: `${srv.url}/hover/index.html`, hover: '.cta', viewports: '1280x800', file },
+  })
+  expect((written.content as any)[0].text).toContain('baseline written:')
+  expect(readFileSync(file, 'utf8')).toBe('[1280x800] parent-bleed a.cta\n')
+
+  const still = await client.callTool({
+    name: 'verify',
+    arguments: { url: `${srv.url}/hover/index.html`, hover: '.cta', viewports: '1280x800', baseline: file },
+  })
+  const stillText = (still.content as any)[0].text
+  expect(stillText.split('\n')[0]).toBe('VERDICT: PASS (0 resolved, 0 new, 1 baseline)')
+  expect(stillText).toContain('baseline: 1 accepted violation unchanged')
+
+  const resolved = await client.callTool({
+    name: 'verify',
+    arguments: { url: `${srv.url}/hover/index.html`, viewports: '1280x800', baseline: file },
+  })
+  const resolvedText = (resolved.content as any)[0].text
+  expect(resolvedText.split('\n')[0]).toBe('VERDICT: PASS (1 resolved, 0 new, 0 baseline)')
+  expect(resolvedText).toContain('resolved: parent-bleed a.cta')
+}, 60_000)
+
+test('check tool with updateBaseline rewrites the file and reports what changed', async () => {
+  const dir = tmpDir('csstruth-mcp-baseline-update-')
+  const file = join(dir, '.csstruth-baseline')
+  await client.callTool({ name: 'baseline', arguments: { url: `${srv.url}/hover/index.html`, file } }) // clean natural state -> empty file
+
+  const res = await client.callTool({
+    name: 'check',
+    arguments: { url: `${srv.url}/hover/index.html`, hover: '.cta', baseline: file, updateBaseline: true },
+  })
+  const text = (res.content as any)[0].text
+  expect(text).toContain('parent-bleed')
+  expect(text).toContain('baseline updated:')
+  expect(text).toContain('1 added, 0 removed')
+  expect(readFileSync(file, 'utf8')).toBe('parent-bleed a.cta\n')
+}, 60_000)
+
+test('check tool baseline param throws a resolved-path error for a missing file', async () => {
+  const res = await client.callTool({ name: 'check', arguments: { url: `${srv.url}/basic/index.html`, baseline: join(tmpDir('csstruth-mcp-baseline-missing-'), 'nope') } })
+  expect(res.isError).toBe(true)
+  expect((res.content as any)[0].text).toContain('No baseline file at')
+}, 60_000)
 
 test('check tool with click param opens the interactive fixture\'s menu and surfaces the parent-bleed', async () => {
   const clean = await client.callTool({ name: 'check', arguments: { url: `${srv.url}/interactive/index.html` } })

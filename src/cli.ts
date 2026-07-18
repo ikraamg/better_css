@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-import { DEFAULT_SWEEP, layoutNeverSettled, parseViewport, parseViewportList, setAttachMode, shutdownChrome, withPage, type Viewport } from './core/connect.js'
+import { DEFAULT_SWEEP, forEachViewport, layoutNeverSettled, parseViewport, parseViewportList, setAttachMode, shutdownChrome, withPage, type Viewport } from './core/connect.js'
 import { extract } from './core/extract.js'
 import { buildTree, findNode, renderTree } from './core/tree.js'
 import { checkInvariants, checkWithPersistence, renderViolations } from './core/invariants.js'
+import { baselineKey, diffBaseline, loadBaselineFile, renderBaselineNote, renderBaselineUpdate, writeBaselineFile, type BaselineDelta } from './core/baseline.js'
 import { explain, renderExplanation } from './core/explain.js'
 import { inspect } from './core/inspect.js'
 import { diffTrees, loadSnapshot, renderDiff, saveSnapshot } from './core/snapshot.js'
@@ -20,7 +21,15 @@ const USAGE = `csstruth <command> <url> [options]
   layout    <url> [--selector S] [--depth N]   print the LayoutTree (budgeted to 400 lines unless --depth is given)
   inspect   <url> --selector S                 deep-dive one element
   explain   <url> --selector S --property P    trace a property to its source rule
-  check     <url>                              run invariants (exit 1 on violations)
+  check     <url>                              run invariants (exit 1 on violations). --baseline
+                                                FILE collapses violations already in FILE to a
+                                                "baseline: N accepted violations unchanged" line;
+                                                only NEW violations are itemized and drive exit 1,
+                                                RESOLVED ones are itemized as "resolved: <rule>
+                                                <selector>". Missing FILE is an error. --update-
+                                                baseline (requires --baseline) rewrites FILE to
+                                                the current set afterward and prints what was
+                                                added/removed
   snapshot  <url> --name NAME [--dir DIR]      lock current LayoutTree to a .tree file
   diff      <url> --name NAME [--dir DIR]      diff current layout vs snapshot
   fix       <url> --root DIR [--apply] [--selector S]
@@ -48,6 +57,18 @@ const USAGE = `csstruth <command> <url> [options]
                                                 --focus/--active/--click/--scroll-to/--settled/
                                                 --at-time like check; not --viewports (apply writes
                                                 once — re-run per viewport instead)
+  baseline  <url> [--viewports ...] [--file .csstruth-baseline]
+                                                capture the CURRENT violation set (after the
+                                                same persistence filter check uses) and write
+                                                it as a sorted, diff-friendly file, one line
+                                                per violation, keyed (viewport?, rule,
+                                                selector) — px excluded (drifts). The viewport
+                                                is only part of the key when --viewports is
+                                                given here; pair with check/verify's --baseline
+                                                by matching --viewports (or lack of it) on both
+                                                sides. Accepts the same --hover/--focus/
+                                                --active/--click/--scroll-to/--settled/
+                                                --at-time as check, to baseline a forced state.
   verify    <url> [--name NAME --dir DIR]      composite: check invariants + (if --name given)
                                                 diff a snapshot, one run. First output line is
                                                 VERDICT: PASS/FAIL; exit 1 on any violation or
@@ -60,7 +81,13 @@ const USAGE = `csstruth <command> <url> [options]
                                                 compares the resting (unforced, un-interacted) layout, at
                                                 the cost of a second page load per viewport when
                                                 --hover/--focus/--active/--click/--scroll-to AND --name
-                                                are both given
+                                                are both given. --baseline/--update-baseline work
+                                                exactly as on check (per-viewport, verdict becomes
+                                                "PASS (R resolved, N new, B baseline)" /
+                                                "FAIL (R resolved, N new, B baseline)" — the delta
+                                                decides, not the raw violation count); a baseline
+                                                paired with verify's default sweep must itself be
+                                                captured with --viewports ${DEFAULT_SWEEP}
   blame     --root DIR --page REL.html [--selector S] [--max-commits N] [--viewport WxH]
                                                 which commit broke the layout. Scope v1: STATIC
                                                 roots only — each historical version is served
@@ -131,21 +158,25 @@ const USAGE = `csstruth <command> <url> [options]
   options: --attach (use your own Chrome on port 9222 — e.g. logged-in pages — instead of
              launching an isolated headless instance); --port N (attach to Chrome at port N)
            --viewport WxH (emulated viewport size, e.g. 1280x800)
-           --viewports W1xH1,W2xH2,... (check/snapshot/diff/verify once per viewport)
+           --viewports W1xH1,W2xH2,... (check/snapshot/diff/verify/baseline once per viewport)
            --hover S, --focus S, --active S (force a pseudo-state on selector S;
-             layout/inspect/explain/check/verify only, not snapshot/diff)
+             layout/inspect/explain/check/verify/baseline only, not snapshot/diff)
            --click S (repeatable; real click on selector S — the target is first scrolled
              into view, centered, and the scroll is left where it lands), --scroll-to S_or_Y
-             (selector or pixel y) — interaction pre-steps, layout/inspect/explain/check/verify
-             only, not snapshot/diff. Order: navigate, scroll-to, clicks (in argument order),
-             settle, then --hover/--focus/--active, then capture
+             (selector or pixel y) — interaction pre-steps, layout/inspect/explain/check/verify/
+             baseline only, not snapshot/diff. Order: navigate, scroll-to, clicks (in argument
+             order), settle, then --hover/--focus/--active, then capture
            --settled (fast-forward every CSS transition/animation to its end state before
-             capturing — layout/inspect/explain/check/verify/snapshot/diff; a perpetual
+             capturing — layout/inspect/explain/check/verify/snapshot/diff/baseline; a perpetual
              animation can't end, so it's pinned to its start (t=0) and noted), --at-time N
              (seek every animation to N ms, clamped to its own full duration, instead of its
              end — same commands EXCEPT snapshot/diff, where a specific animation frame isn't
              a deterministic snapshot). Mutually exclusive with each other. Runs after
-             interact steps and before --hover/--focus/--active`
+             interact steps and before --hover/--focus/--active
+           --baseline FILE (check/verify only — report only NEW/RESOLVED violations against
+             FILE instead of the raw count; see check's own doc above), --update-baseline
+             (requires --baseline — rewrite FILE to the current set after this run), --file
+             FILE (baseline command only — where to write; default .csstruth-baseline)`
 
 interface Flags {
   [key: string]: string | string[] | undefined
@@ -162,12 +193,13 @@ interface Flags {
   root?: string; apply?: string
   page?: string; 'max-commits'?: string
   interval?: string
+  baseline?: string; 'update-baseline'?: string; file?: string
 }
 
 // Repeated occurrences of these flags accumulate into an array instead of last-wins.
 const REPEATABLE = new Set(['click'])
 // Presence-only flags: no value follows, so the parser must not consume the next argv slot.
-const BOOLEAN = new Set(['settled', 'apply'])
+const BOOLEAN = new Set(['settled', 'apply', 'update-baseline'])
 
 function flags(argv: string[]): Flags {
   // required fields (selector/property/name) are only actually read on commands whose
@@ -254,7 +286,7 @@ async function main(): Promise<number> {
   const url = process.argv[3]
   const f = flags(process.argv.slice(4))
   if (!cmd || !url) { console.error(USAGE); return 2 }
-  if (!['layout', 'inspect', 'explain', 'check', 'snapshot', 'diff', 'verify', 'stability', 'fix', 'watch'].includes(cmd)) {
+  if (!['layout', 'inspect', 'explain', 'check', 'snapshot', 'diff', 'verify', 'stability', 'fix', 'watch', 'baseline'].includes(cmd)) {
     console.error(USAGE)
     return 2
   }
@@ -265,17 +297,25 @@ async function main(): Promise<number> {
     }
   }
   const stateFlags = (['hover', 'focus', 'active'] as const).filter((k) => f[k] !== undefined)
-  if (stateFlags.length && !['layout', 'inspect', 'explain', 'check', 'verify', 'fix'].includes(cmd)) {
-    console.error(`--${stateFlags[0]} is only valid for layout/inspect/explain/check/verify/fix, not ${cmd} — forced-state snapshots invite stale-state confusion.`)
+  if (stateFlags.length && !['layout', 'inspect', 'explain', 'check', 'verify', 'fix', 'baseline'].includes(cmd)) {
+    console.error(`--${stateFlags[0]} is only valid for layout/inspect/explain/check/verify/fix/baseline, not ${cmd} — forced-state snapshots invite stale-state confusion.`)
     return 2
   }
   const interact: InteractSteps = { click: f.click, scrollTo: f['scroll-to'] }
-  if (hasInteractSteps(interact) && !['layout', 'inspect', 'explain', 'check', 'verify', 'fix'].includes(cmd)) {
-    console.error(`--click/--scroll-to are only valid for layout/inspect/explain/check/verify/fix, not ${cmd} — interacted-state snapshots invite stale-state confusion.`)
+  if (hasInteractSteps(interact) && !['layout', 'inspect', 'explain', 'check', 'verify', 'fix', 'baseline'].includes(cmd)) {
+    console.error(`--click/--scroll-to are only valid for layout/inspect/explain/check/verify/fix/baseline, not ${cmd} — interacted-state snapshots invite stale-state confusion.`)
     return 2
   }
   if (cmd === 'fix' && f.viewports !== undefined) {
     console.error(`--viewports is not valid for fix — apply writes files once per run; pass --viewport (singular) or re-run per viewport.`)
+    return 2
+  }
+  if (f.baseline !== undefined && !['check', 'verify'].includes(cmd)) {
+    console.error(`--baseline is only valid for check/verify, not ${cmd}.`)
+    return 2
+  }
+  if (f['update-baseline'] !== undefined && f.baseline === undefined) {
+    console.error(`--update-baseline requires --baseline FILE.`)
     return 2
   }
   // USAGE promises stability takes none of these; silently no-oping them would lie
@@ -311,11 +351,11 @@ async function main(): Promise<number> {
     try { viewports = parseViewportList(f.viewports) }
     catch (err) { console.error((err as Error).message); return 2 }
   }
-  if (stateFlags.length && viewports && cmd !== 'check' && cmd !== 'verify') {
+  if (stateFlags.length && viewports && !['check', 'verify', 'baseline'].includes(cmd)) {
     console.error(`--${stateFlags[0]} is not supported together with --viewports yet.`)
     return 2
   }
-  if (hasInteractSteps(interact) && viewports && cmd !== 'check' && cmd !== 'verify') {
+  if (hasInteractSteps(interact) && viewports && !['check', 'verify', 'baseline'].includes(cmd)) {
     console.error(`--click/--scroll-to is not supported together with --viewports yet.`)
     return 2
   }
@@ -336,6 +376,28 @@ async function main(): Promise<number> {
       return 2
     }
     return await watch(url, { port: opts.port, viewport, interval: f.interval !== undefined ? Number(f.interval) : undefined })
+  }
+
+  if (cmd === 'baseline') {
+    const file = f.file ?? '.csstruth-baseline'
+    const states: PseudoStates = { hover: f.hover, focus: f.focus, active: f.active }
+    const capture = async (client: any) => {
+      await runInteractSteps(client, interact, { skipSettleWait: needsAnimationCapture(animate) })
+      await settleAnimations(client, animate)
+      await forcePseudoStates(client, states)
+      const cap = async () => checkInvariants(buildTree(await extract(client)))
+      const { violations } = await checkWithPersistence(layoutNeverSettled(client), cap)
+      assertNoInteractNavigation(client)
+      return violations
+    }
+    const keys = viewports
+      ? (await forEachViewport(url, viewports, async (client, vp) =>
+        (await capture(client)).map((v) => baselineKey(vp.label, v)), opts)).flatMap((r) => r.result)
+      : await withPage(url, async (client) => (await capture(client)).map((v) => baselineKey(undefined, v)), opts)
+    writeBaselineFile(file, keys)
+    const n = new Set(keys).size
+    console.log(`baseline written: ${file} (${n} violation${n === 1 ? '' : 's'})`)
+    return 0
   }
 
   if (cmd === 'fix') {
@@ -391,17 +453,26 @@ async function main(): Promise<number> {
 
   if (cmd === 'verify') {
     const states: PseudoStates = { hover: f.hover, focus: f.focus, active: f.active }
+    // Missing FILE throws loadBaselineFile's resolved-path error, caught by main()'s
+    // top-level .catch() (contract 3) — same as loadSnapshot's existing propagation.
+    const baseline = f.baseline !== undefined ? loadBaselineFile(f.baseline) : undefined
     // --viewport (singular) acts as a one-entry sweep; --viewports wins when both are given
-    const { output, dirty } = await verifyMatrix(url, viewports ?? parseViewportList(f.viewport ?? DEFAULT_SWEEP), {
+    const { output, dirty, baselineSummary } = await verifyMatrix(url, viewports ?? parseViewportList(f.viewport ?? DEFAULT_SWEEP), {
       port: opts.port,
       states: stateFlags.length ? states : undefined,
       interact: hasInteractSteps(interact) ? interact : undefined,
       animate: needsAnimationCapture(animate) ? animate : undefined,
       name: f.name,
       dir: f.dir,
+      baseline,
     })
+    let out = output
+    if (f['update-baseline'] !== undefined && baselineSummary) {
+      writeBaselineFile(f.baseline!, baselineSummary.allCurrent)
+      out += `\n${renderBaselineUpdate(f.baseline!, baselineSummary)}`
+    }
     if (dirty) process.exitCode = 1
-    console.log(output)
+    console.log(out)
     return Number(process.exitCode ?? 0)
   }
 
@@ -409,9 +480,15 @@ async function main(): Promise<number> {
     const mopts = { port: opts.port }
     if (cmd === 'check') {
       const states: PseudoStates = { hover: f.hover, focus: f.focus, active: f.active }
-      const { output, dirty } = await checkMatrix(url, viewports, { ...mopts, states, interact, animate })
+      const baseline = f.baseline !== undefined ? loadBaselineFile(f.baseline) : undefined
+      const { output, dirty, baselineSummary } = await checkMatrix(url, viewports, { ...mopts, states, interact, animate, baseline })
+      let out = output
+      if (f['update-baseline'] !== undefined && baselineSummary) {
+        writeBaselineFile(f.baseline!, baselineSummary.allCurrent)
+        out += `\n${renderBaselineUpdate(f.baseline!, baselineSummary)}`
+      }
       if (dirty) process.exitCode = 1
-      console.log(output)
+      console.log(out)
       return Number(process.exitCode ?? 0)
     }
     if (cmd === 'snapshot') console.log(await snapshotMatrix(url, viewports, f.name, f.dir, { ...mopts, settled: animate.settled }))
@@ -420,6 +497,10 @@ async function main(): Promise<number> {
   }
 
   const states: PseudoStates = { hover: f.hover, focus: f.focus, active: f.active }
+  // Missing FILE throws loadBaselineFile's resolved-path error before Chrome even
+  // launches — same top-level .catch() as verify/checkMatrix above (contract 3).
+  const baseline = cmd === 'check' && f.baseline !== undefined ? loadBaselineFile(f.baseline) : undefined
+  let baselineDelta: BaselineDelta | undefined
   const output = await withPage(url, async (client) => {
     await runInteractSteps(client, interact, { skipSettleWait: needsAnimationCapture(animate) })
     await settleAnimations(client, animate)
@@ -440,8 +521,13 @@ async function main(): Promise<number> {
       case 'check': {
         const capture = async () => checkInvariants(buildTree(await extract(client)))
         const { violations, persistenceFiltered } = await checkWithPersistence(layoutNeverSettled(client), capture)
-        if (violations.length) process.exitCode = 1
-        result = (await renderViolations(client, violations)) +
+        // Field #6: without --baseline, byte-identical to today.
+        const delta = baseline ? diffBaseline(baseline, undefined, violations) : undefined
+        baselineDelta = delta
+        const toRender = delta ? delta.newViolations : violations
+        const baselineNote = delta ? renderBaselineNote(delta) : ''
+        if ((delta ? delta.newViolations.length : violations.length) > 0) process.exitCode = 1
+        result = (await renderViolations(client, toRender)) + (baselineNote ? `\n${baselineNote}` : '') +
           (persistenceFiltered ? '\nnote: page never settled — reporting only violations stable across two captures' : '')
         break
       }
@@ -466,7 +552,12 @@ async function main(): Promise<number> {
     return result + animateNote(client)
   }, opts)
 
-  console.log(output)
+  let out = output
+  if (cmd === 'check' && f['update-baseline'] !== undefined && baselineDelta) {
+    writeBaselineFile(f.baseline!, baselineDelta.currentKeys)
+    out += `\n${renderBaselineUpdate(f.baseline!, { added: baselineDelta.addedKeys, removed: baselineDelta.resolvedKeys, allCurrent: baselineDelta.currentKeys })}`
+  }
+  console.log(out)
   return Number(process.exitCode ?? 0)
 }
 

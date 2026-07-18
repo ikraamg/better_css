@@ -6,9 +6,9 @@ description: Ground-truth CSS/layout workflow using the csstruth MCP tools (mcp_
 # csstruth: CSS ground truth for agents
 
 csstruth extracts the browser's ACTUAL rendered layout as deterministic text.
-Eight tools — six inspectors, one composite verdict (`verify`), one load-time
-stability report (`stability`) — as MCP tools (`mcp__csstruth__*`) or the
-`csstruth` CLI.
+Eleven tools — six inspectors, one composite verdict (`verify`), one baseline
+writer (`baseline`), one load-time stability report (`stability`) — as MCP
+tools (`mcp__csstruth__*`) or the `csstruth` CLI.
 
 ## The one hard rule
 
@@ -80,6 +80,32 @@ visible parent bleed, clipped text, un-layered overlap, zero-size/tiny tap
 targets — each with exact px and a `suspect: <rule> @ file:line`. For a
 genuinely intentional pattern (animated counters, marquees), add
 `data-csstruth-ignore` to that element rather than arguing with the check.
+
+## Adopting on a page that isn't clean yet — baselines
+
+`verify`'s all-or-nothing `VERDICT: FAIL` is useless for confirming a
+targeted fix when the page has standing, known-benign violations, and it
+blocks `verify` from ever gating CI on a page that isn't already fully clean.
+Don't hand-diff violation lists — baseline them:
+
+1. `baseline` once, with the SAME `viewports`/`hover`/etc. you'll pass to
+   `verify` later: writes a sorted, diff-friendly file of the current
+   violation set (a `.csstruth-baseline` path is a reasonable default).
+2. From then on pass `baseline` (the file path) to `check`/`verify`. Already-
+   accepted violations collapse to `baseline: N accepted violations
+   unchanged`; only violations NOT in the file are itemized and drive the
+   verdict/exit — this is what "confirm my fix didn't break anything else on
+   an otherwise-messy page" actually needs. Anything RESOLVED (was in the
+   file, gone now) is itemized as `resolved: <rule> <selector>` — report the
+   win, don't bury it in a clean re-baseline.
+3. After intentionally fixing or accepting a batch, pass `updateBaseline: true`
+   alongside `baseline` on that run to rewrite the file to the current set;
+   the output names what was added/removed. Commit the updated file — it's a
+   small, reviewable diff, not a blob.
+
+A baseline's viewport labeling must match what it's compared against:
+capture and compare with the same `viewports` (or neither side passes it).
+Without `baseline`, `check`/`verify` behave exactly as before.
 
 ## Chrome
 

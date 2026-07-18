@@ -464,6 +464,115 @@ test('fix --apply with nothing fixable exits 0 with "no patches applied"', async
   expect(stdout).toContain('no patches applied')
 }, 60_000)
 
+// Field #6: baselines + delta verdicts. Reuses the hover fixture's deterministic
+// forced-hover violation (parent-bleed, see the check --hover tests above) as the one
+// "known-benign" baseline entry throughout.
+function baselineFile(): string {
+  return join(tmpDir('csstruth-baseline-test-'), '.csstruth-baseline')
+}
+
+// A temp copy of fixtures/hover with one ADDITIONAL violation that's always present
+// (a 10x10 button — independent of --hover) — used to prove baselining only reports the
+// NEW one, not the pre-existing (baselined) parent-bleed.
+function serveMutatedHover() {
+  const workDir = tmpDir('csstruth-baseline-hover-')
+  cpSync('fixtures/hover', workDir, { recursive: true })
+  writeFileSync(join(workDir, 'index.html'),
+    '<!doctype html><html><head><link rel="stylesheet" href="main.css"></head><body>' +
+    '<div class="rail"><a class="cta" href="#">Click</a></div>' +
+    '<button style="width:10px;height:10px;display:block">x</button>' +
+    '</body></html>')
+  return serveFixtures(workDir)
+}
+
+test('(a) baseline write on the hover fixture pins deterministic, sorted, px-excluded file content', async () => {
+  const file = baselineFile()
+  const { stdout } = await cli('baseline', `${srv.url}/hover/index.html`, '--hover', '.cta', '--file', file)
+  expect(stdout).toContain('baseline written:')
+  expect(stdout).toContain('1 violation')
+  expect(readFileSync(file, 'utf8')).toBe('parent-bleed a.cta\n')
+}, 60_000)
+
+test('(b) verify --baseline collapses a still-present baselined violation to PASS', async () => {
+  const file = baselineFile()
+  await cli('baseline', `${srv.url}/hover/index.html`, '--hover', '.cta', '--viewports', '1280x800', '--file', file)
+  expect(readFileSync(file, 'utf8')).toBe('[1280x800] parent-bleed a.cta\n')
+
+  const { stdout } = await cli('verify', `${srv.url}/hover/index.html`, '--hover', '.cta', '--viewports', '1280x800', '--baseline', file)
+  expect(stdout.split('\n')[0]).toBe('VERDICT: PASS (0 resolved, 0 new, 1 baseline)')
+  expect(stdout).toContain('baseline: 1 accepted violation unchanged')
+  expect(stdout).not.toContain('parent-bleed:')
+}, 60_000)
+
+test('(c) verify --baseline FAILs naming ONLY a genuinely new violation, not the baselined one', async () => {
+  const file = baselineFile()
+  await cli('baseline', `${srv.url}/hover/index.html`, '--hover', '.cta', '--viewports', '1280x800', '--file', file)
+
+  const mutated = await serveMutatedHover()
+  try {
+    const err = await cli('verify', `${mutated.url}/index.html`, '--hover', '.cta', '--viewports', '1280x800', '--baseline', file).catch((e) => e)
+    expect(err.code).toBe(1)
+    expect(err.stdout.split('\n')[0]).toBe('VERDICT: FAIL (0 resolved, 1 new, 1 baseline)')
+    expect(err.stdout).toContain('tap-target')
+    expect(err.stdout).not.toContain('parent-bleed:')
+    expect(err.stdout).toContain('baseline: 1 accepted violation unchanged')
+  } finally {
+    mutated.close()
+  }
+}, 60_000)
+
+test('(d) verify --baseline PASSes with a resolved: line when a baselined violation is fixed', async () => {
+  const file = baselineFile()
+  await cli('baseline', `${srv.url}/hover/index.html`, '--hover', '.cta', '--viewports', '1280x800', '--file', file)
+
+  // No --hover this time: the fixture's natural state is clean (see the hover tests above).
+  const { stdout } = await cli('verify', `${srv.url}/hover/index.html`, '--viewports', '1280x800', '--baseline', file)
+  expect(stdout.split('\n')[0]).toBe('VERDICT: PASS (1 resolved, 0 new, 0 baseline)')
+  expect(stdout).toContain('resolved: parent-bleed a.cta')
+}, 60_000)
+
+test('(e) --update-baseline rewrites the file to the current set and round-trips clean', async () => {
+  const file = baselineFile()
+  await cli('baseline', `${srv.url}/hover/index.html`, '--hover', '.cta', '--viewports', '1280x800', '--file', file)
+
+  const mutated = await serveMutatedHover()
+  try {
+    const err = await cli('verify', `${mutated.url}/index.html`, '--hover', '.cta', '--viewports', '1280x800', '--baseline', file, '--update-baseline').catch((e) => e)
+    expect(err.code).toBe(1) // the run that PRODUCES the update still reports the new violation
+    expect(err.stdout).toContain('baseline updated:')
+    expect(err.stdout).toContain('1 added, 0 removed')
+    expect(err.stdout).toContain('[1280x800] tap-target button')
+
+    const updated = readFileSync(file, 'utf8').split('\n').filter(Boolean).sort()
+    expect(updated).toEqual(['[1280x800] parent-bleed a.cta', '[1280x800] tap-target button'])
+
+    const { stdout } = await cli('verify', `${mutated.url}/index.html`, '--hover', '.cta', '--viewports', '1280x800', '--baseline', file)
+    expect(stdout.split('\n')[0]).toBe('VERDICT: PASS (0 resolved, 0 new, 2 baseline)')
+  } finally {
+    mutated.close()
+  }
+}, 60_000)
+
+test('missing --baseline file is a clear resolved-path error, exit 2', async () => {
+  const dir = tmpDir('csstruth-baseline-missing-')
+  const missing = join(dir, 'nope')
+  const err = await cli('check', `${srv.url}/basic/index.html`, '--baseline', missing).catch((e) => e)
+  expect(err.code).toBe(2)
+  expect(err.stderr).toContain(`No baseline file at ${missing}`)
+}, 60_000)
+
+test('--baseline is rejected for commands other than check/verify', async () => {
+  const err = await cli('layout', `${srv.url}/basic/index.html`, '--baseline', 'x').catch((e) => e)
+  expect(err.code).toBe(2)
+  expect(err.stderr).toContain('--baseline is only valid for check/verify')
+}, 60_000)
+
+test('--update-baseline without --baseline is rejected', async () => {
+  const err = await cli('check', `${srv.url}/basic/index.html`, '--update-baseline').catch((e) => e)
+  expect(err.code).toBe(2)
+  expect(err.stderr).toContain('--update-baseline requires --baseline')
+}, 60_000)
+
 // SIGINT on a non-watch command must still tear down Chrome, not orphan the tree — same
 // shape as blame.test.ts's own mid-walk SIGINT test. Single-process spawn (no npx→tsx
 // chain) so the signal reaches the CLI itself; waiting for a NEW Chrome pid to appear

@@ -40,7 +40,7 @@ Chromium's DevTools Protocol exposes everything DevTools itself knows: one bulk
 `CSS.getMatchedStylesForNode` returns the complete cascade for any element —
 every rule that matched, its specificity, and the stylesheet position it came
 from (source-mapped back through your build). csstruth packages that truth
-into 11 composable CLI commands (10 of them also exposed as MCP tools —
+into 12 composable CLI commands (11 of them also exposed as MCP tools —
 `watch` is CLI-only, a streaming daemon doesn't fit MCP's request/response
 shape) instead of megabytes of protocol JSON.
 
@@ -68,6 +68,7 @@ screenshot comparison.
 |------|-----------------|
 | `verify` | **"Is this OK?"** — one call: invariants across a viewport sweep (default 375/768/1280) + optional snapshot diffs. First line is always `VERDICT: PASS` or `VERDICT: FAIL (…)`. |
 | `check` | Layout-bug scan: viewport overflow, visible parent bleed, clipped text, unintended overlap, zero-size/tiny tap targets — exact px + the suspect rule at `file:line`. |
+| `baseline` | Snapshot the CURRENT violation set as a sorted, diff-friendly file — the fix for adopting `check`/`verify` on a page that isn't (and may not soon be) fully clean. Pass the resulting file to `check`/`verify`'s `--baseline` to report only NEW/RESOLVED violations instead of an all-or-nothing PASS/FAIL. See **Adopting on a brownfield page** below. |
 | `fix` | Propose (default) or **apply** mechanical patches for fixable violations (clipped text, tiny tap targets, a fixed px width bleeding/overflowing). DRY-RUN unless `--apply`; writes are confined to `--root` and guarded by a stale-source check. See **Safety** below. |
 | `blame` | **"Which commit broke this?"** — walks a git repo's history backwards (newest→oldest, capped at 25 commits by default) checking out each commit into a scratch `git worktree`, until it finds the first commit where the current violation is gone. Names the culprit (`file:line`-style: sha, subject, date, author) plus the layout delta and violations it introduced. STATIC roots only in v1 (no dev-server/build step per checkout); the user's HEAD/index/working tree are never touched. |
 | `watch` | **Live diff stream while you edit.** Holds one page open, polling the layout signature every `--interval` ms (default 500); on a change, prints the layout delta and any NEW/RESOLVED violations under a `[HH:MM:SS]` block — silent otherwise. Survives an HMR full-refresh (`page reloaded`, same URL); stops if you navigate elsewhere or the dev server dies. Ctrl+C for a clean exit. CLI only — see **Use `watch` from a background shell** below. |
@@ -114,6 +115,50 @@ reports `before: N violations → after: M violations` plus any **new**
 violations the patch introduced, exiting non-zero unless the fix strictly
 improved things. Inline `<style>`/`style=""` suspects are never patchable —
 refused, naming the `page:line` to hand-edit instead.
+
+**Adopting `verify` on a brownfield page — baselines.** An all-or-nothing
+`VERDICT: FAIL` is useless for confirming a targeted fix on a page that has
+standing, known-benign violations, and it blocks `verify` from ever gating CI
+on a page that isn't already fully clean (the standard linter-adoption
+problem). Fix it once:
+
+```bash
+$ csstruth baseline http://localhost:3000 --viewports 375x800,768x800,1280x800
+baseline written: .csstruth-baseline (15 violations)
+```
+
+Then pass `--baseline` to `check`/`verify` (same `--viewports`, so the keys
+line up): violations already in the file collapse to one line, only genuinely
+NEW violations are itemized and drive the verdict/exit code, and anything
+RESOLVED (in the file, no longer present) is celebrated:
+
+```bash
+$ csstruth verify http://localhost:3000 --viewports 375x800,768x800,1280x800 --baseline .csstruth-baseline
+VERDICT: PASS (2 resolved, 0 new, 13 baseline)
+[1280x800] resolved: parent-bleed a.cta
+[1280x800] baseline: 13 accepted violations unchanged
+checked 3 viewports: ...
+```
+
+A genuinely new violation still fails the build, naming only itself — not the
+13 you haven't gotten to yet. When you intentionally accept or fix a batch of
+violations, `--update-baseline` rewrites the file to match and prints what
+was added/removed:
+
+```bash
+$ csstruth verify http://localhost:3000 --viewports 375x800,768x800,1280x800 --baseline .csstruth-baseline --update-baseline
+...
+baseline updated: .csstruth-baseline (0 added, 2 removed)
+  - [1280x800] parent-bleed a.cta
+```
+
+The baseline file is a sorted, diff-friendly text file — one line per
+violation, keyed by `(viewport, rule, selector)` with pixel amounts excluded
+(they drift run to run) — so a PR that fixes or accepts violations shows up
+as a small, reviewable diff. A baseline's viewport labeling must match the
+run it's compared against: capture with the same `--viewports` (or neither
+side passes it) you'll later pass to `check`/`verify`. Without `--baseline`,
+behavior is unchanged.
 
 ## Install
 
@@ -163,9 +208,13 @@ csstruth snapshot http://localhost:3000 --name home --dir .csstruth
 csstruth diff     http://localhost:3000 --name home --dir .csstruth
 csstruth blame    --root . --page index.html --selector .sidebar
 csstruth watch    http://localhost:3000
+csstruth baseline http://localhost:3000 --file .csstruth-baseline   # once, to adopt on a non-clean page
+csstruth verify   http://localhost:3000 --baseline .csstruth-baseline
 ```
 
-`check`/`verify` exit 1 on violations — drop them straight into CI.
+`check`/`verify` exit 1 on violations — drop them straight into CI. On a page
+that isn't fully clean yet, add `--baseline` (see **Adopting on a brownfield
+page** above) so CI only fails on NEW violations, not the backlog.
 
 ### Use `watch` from a background shell (agents)
 
