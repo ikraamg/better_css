@@ -412,20 +412,27 @@ async function main(): Promise<number> {
       await settleAnimations(client, animate)
       await forcePseudoStates(client, states)
       const cap = async () => checkInvariants(buildTree(await extract(client)))
-      const { violations } = await checkWithPersistence(layoutNeverSettled(client), cap)
+      const { violations, persistenceFiltered } = await checkWithPersistence(layoutNeverSettled(client), cap)
       assertNoInteractNavigation(client)
-      return violations
+      return { violations, persistenceFiltered }
     }
     // Field #6 fix: baseline ALWAYS runs as a matrix now, defaulting to DEFAULT_SWEEP —
     // matching verify's own default so the README quickstart (`baseline <url>` then
     // `verify <url> --baseline`, neither passing --viewports) actually pairs up. --viewport
     // (singular) acts as a one-entry sweep, same convention as verify's own --viewport.
     const vps = viewports ?? parseViewportList(f.viewport ?? DEFAULT_SWEEP)
-    const keys = (await forEachViewport(url, vps, async (client, vp) =>
-      (await capture(client)).map((v) => baselineKey(vp.label, v)), opts)).flatMap((r) => r.result)
+    const results = await forEachViewport(url, vps, async (client, vp) => {
+      const { violations, persistenceFiltered } = await capture(client)
+      return { keys: violations.map((v) => baselineKey(vp.label, v)), persistenceFiltered }
+    }, opts)
+    const keys = results.flatMap((r) => r.result.keys)
+    // Same note check/verify give for a filtered capture — otherwise a baseline pinned from
+    // a never-settling page reads identically to a normal one.
+    const persistenceNote = results.some((r) => r.result.persistenceFiltered)
+      ? '\nnote: page never settled — reporting only violations stable across two captures' : ''
     writeBaselineFile(file, keys)
     const n = new Set(keys).size
-    console.log(`baseline written: ${file} (${n} violation${n === 1 ? '' : 's'})`)
+    console.log(`baseline written: ${file} (${n} violation${n === 1 ? '' : 's'})${persistenceNote}`)
     return 0
   }
 

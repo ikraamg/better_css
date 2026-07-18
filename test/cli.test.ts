@@ -611,6 +611,14 @@ test('(h) a mismatched-shape baseline pairing prints a loud warning', async () =
   expect(res.stdout).toContain('warning: baseline was captured with a different viewport configuration')
 }, 60_000)
 
+// Baseline discarded checkWithPersistence's persistenceFiltered flag — unlike check/verify
+// it gave no hint the written file used the filtered (stable-across-two-captures) set.
+test('(i) baseline on a never-settling page notes the persistence filter', async () => {
+  const file = baselineFile()
+  const { stdout } = await cli('baseline', `${srv.url}/async-render/never-settles-with-bug.html`, '--viewport', '1280x800', '--file', file)
+  expect(stdout).toContain('note: page never settled — reporting only violations stable across two captures')
+}, 60_000)
+
 test('missing --baseline file is a clear resolved-path error, exit 2', async () => {
   const dir = tmpDir('csstruth-baseline-missing-')
   const missing = join(dir, 'nope')

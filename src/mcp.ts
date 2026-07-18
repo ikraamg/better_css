@@ -264,19 +264,29 @@ server.tool('baseline', 'Capture the CURRENT violation set (after the same persi
       await settleAnimations(client, animate)
       await forcePseudoStates(client, states)
       const cap = async () => checkInvariants(buildTree(await extract(client)))
-      const { violations } = await checkWithPersistence(layoutNeverSettled(client), cap)
+      const { violations, persistenceFiltered } = await checkWithPersistence(layoutNeverSettled(client), cap)
       assertNoInteractNavigation(client)
-      return violations
+      return { violations, persistenceFiltered }
     }
     const pageOpts = { port: p, viewport: v ? parseViewport(v) : undefined, captureAnimations: needsAnimationCapture(animate) }
     return (async () => {
-      const keys = vs
-        ? (await forEachViewport(u, parseViewportList(vs), async (client, vp) =>
-          (await capture(client)).map((vi) => baselineKey(vp.label, vi)), pageOpts)).flatMap((r) => r.result)
-        : await withPage(u, async (client) => (await capture(client)).map((vi) => baselineKey(undefined, vi)), pageOpts)
+      const results = vs
+        ? (await forEachViewport(u, parseViewportList(vs), async (client, vp) => {
+          const { violations, persistenceFiltered } = await capture(client)
+          return { keys: violations.map((vi) => baselineKey(vp.label, vi)), persistenceFiltered }
+        }, pageOpts)).map((r) => r.result)
+        : [await withPage(u, async (client) => {
+          const { violations, persistenceFiltered } = await capture(client)
+          return { keys: violations.map((vi) => baselineKey(undefined, vi)), persistenceFiltered }
+        }, pageOpts)]
+      const keys = results.flatMap((r) => r.keys)
+      // Same note check/verify give for a filtered capture — otherwise a baseline pinned
+      // from a never-settling page reads identically to a normal one.
+      const persistenceNote = results.some((r) => r.persistenceFiltered)
+        ? '\nnote: page never settled — reporting only violations stable across two captures' : ''
       writeBaselineFile(path, keys)
       const n = new Set(keys).size
-      return text(`baseline written: ${path} (${n} violation${n === 1 ? '' : 's'})`)
+      return text(`baseline written: ${path} (${n} violation${n === 1 ? '' : 's'})${persistenceNote}`)
     })()
   })
 
