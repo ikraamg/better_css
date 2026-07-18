@@ -1,7 +1,7 @@
-import { forEachViewport, pageWasBusy, type Viewport } from './connect.js'
+import { forEachViewport, layoutNeverSettled, pageWasBusy, type Viewport } from './connect.js'
 import { extract } from './extract.js'
 import { buildTree, renderTree } from './tree.js'
-import { checkInvariants, renderViolations } from './invariants.js'
+import { checkInvariants, renderViolations, violationKey } from './invariants.js'
 import { diffTrees, loadSnapshot, renderDiff } from './snapshot.js'
 import { forcePseudoStates, type PseudoStates } from './state.js'
 import { assertNoInteractNavigation, hasInteractSteps, interactWasUnsettled, runInteractSteps, type InteractSteps } from './interact.js'
@@ -59,20 +59,31 @@ export async function verifyMatrix(
     await runInteractSteps(client, opts.interact ?? {}, { skipSettleWait: needsAnimationCapture(opts.animate ?? {}) })
     await settleAnimations(client, opts.animate ?? {})
     if (opts.states) await forcePseudoStates(client, opts.states)
+    // The diff below always wants THIS tree (the resting layout at check time), so the
+    // persistence filter's second capture (only taken when the settle cap was hit) is a
+    // separate, throwaway extract that only feeds the violation-identity comparison.
     const tree = buildTree(await extract(client))
-    const violations = checkInvariants(tree)
-    // A click's delayed redirect can land during the extract/checkInvariants capture
+    const first = checkInvariants(tree)
+    let violations = first
+    const persistenceFiltered = layoutNeverSettled(client)
+    if (persistenceFiltered) {
+      await new Promise((r) => setTimeout(r, 400))
+      const secondKeys = new Set(checkInvariants(buildTree(await extract(client))).map(violationKey))
+      violations = first.filter((v) => secondKeys.has(violationKey(v)))
+    }
+    // A click's delayed redirect can land during the extract/checkInvariants capture(s)
     // above, after runInteractSteps already returned clean — check again now (see
     // interact.ts).
     assertNoInteractNavigation(client)
-    let block = (await renderViolations(client, violations)) + busyNote(client)
+    const persistenceNote = persistenceFiltered ? '\nnote: page never settled — reporting only violations stable across two captures' : ''
+    let block = (await renderViolations(client, violations)) + persistenceNote + busyNote(client)
     let changes = 0
     if (opts.name && !modified) {
       const d = diffOrNote(opts.name, vp.label, opts.dir, renderTree(tree))
       block += `\n${d.rendered}`
       changes = d.changes
     }
-    return { violations: violations.length, block, changes }
+    return { violations: violations.length, block, changes, neverSettled: persistenceFiltered }
   }, { port: opts.port, captureAnimations: needsAnimationCapture(opts.animate ?? {}) })
 
   let diffed: Array<{ label: string; result: { rendered: string; changes: number } }> | undefined
@@ -105,9 +116,15 @@ export async function verifyMatrix(
     .map((c) => `${c.label}=${c.result.violations ? `${c.result.violations} violations` : 'clean'}`)
     .join(', ')
   const dirty = totalViolations > 0 || totalChanges > 0
+  // Field #1, contract 2c: at least one viewport never settled — never a confident FAIL
+  // on possibly-mid-render truth, even though the (already persistence-filtered)
+  // violations are still real enough to keep exit code 1.
+  const anyNeverSettled = checked.some((c) => c.result.neverSettled)
   const verdict = dirty
-    ? `VERDICT: FAIL (${totalViolations} violations across ${viewports.length} viewports${totalChanges ? `, ${totalChanges} layout changes` : ''})`
-    : 'VERDICT: PASS'
+    ? (anyNeverSettled
+      ? `VERDICT: INCONCLUSIVE (page never settled; ${totalViolations} persistent violations)`
+      : `VERDICT: FAIL (${totalViolations} violations across ${viewports.length} viewports${totalChanges ? `, ${totalChanges} layout changes` : ''})`)
+    : (anyNeverSettled ? 'VERDICT: PASS (page never fully settled)' : 'VERDICT: PASS')
   const output = `${verdict}\n${blocks.join('\n')}\nchecked ${checked.length} viewports: ${summary}`
   return { output, dirty }
 }

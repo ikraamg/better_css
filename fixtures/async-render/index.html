@@ -1,0 +1,43 @@
+<!doctype html><html><head><style>
+* { margin: 0; box-sizing: border-box; }
+/* Field #1: "flex items before shrink" — a genuinely ACTIVE transition (not a discrete
+   setTimeout jump: waitForSettle only detects motion that's actually happening between
+   frames, via the rect hash and document.getAnimations() — a change merely SCHEDULED for
+   later looks perfectly settled until it starts). .bleeder starts at 500px inside a 300px
+   parent (200px bleed) and transitions down to 300px over 1s, triggered synchronously on
+   load (same proven technique as fixtures/animated/index.html). A capture taken right
+   after navigate() (no settle wait) lands mid-transition — some intermediate, non-final
+   width, still bleeding. A capture that waits for the transition to finish reads 300px:
+   clean.
+*/
+.parent { width: 300px; height: 50px; }
+.bleeder { width: 500px; height: 50px; background: tomato; transition: width 1s linear; }
+.bleeder.shrunk { width: 300px; }
+
+/* Field #1: "empty async parents stacked" — two static, unpositioned siblings placed in
+   the same grid cell (same technique as fixtures/overlap's genuine-accident case) until a
+   real transition moves the second one clear, over the same 1s window. */
+.grid-wrap { display: grid; grid-template-columns: 200px; grid-template-rows: 80px; }
+.panel-a, .panel-b { grid-row: 1; grid-column: 1; width: 150px; height: 60px; }
+.panel-a { background: gold; }
+.panel-b { background: plum; transition: margin-top 1s linear; }
+.panel-b.separated { margin-top: 70px; }
+</style></head><body>
+<div class="parent"><div class="bleeder" id="bleeder"></div></div>
+<div class="grid-wrap">
+  <div class="panel-a"></div>
+  <div class="panel-b" id="panel-b"></div>
+</div>
+<script>
+// Forcing a reflow before adding the class is what makes the browser register a
+// transition at all (two distinct style snapshots to diff) — verified empirically in
+// fixtures/animated/index.html; adding the class in the same style recalc as initial
+// layout does not start a transition.
+var bleeder = document.getElementById('bleeder')
+void bleeder.offsetWidth
+bleeder.classList.add('shrunk')
+var panelB = document.getElementById('panel-b')
+void panelB.offsetWidth
+panelB.classList.add('separated')
+</script>
+</body></html>

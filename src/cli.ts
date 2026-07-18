@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-import { DEFAULT_SWEEP, parseViewport, parseViewportList, shutdownChrome, withPage, type Viewport } from './core/connect.js'
+import { DEFAULT_SWEEP, layoutNeverSettled, parseViewport, parseViewportList, shutdownChrome, withPage, type Viewport } from './core/connect.js'
 import { extract } from './core/extract.js'
 import { buildTree, findNode, renderTree } from './core/tree.js'
-import { checkInvariants, renderViolations } from './core/invariants.js'
+import { checkInvariants, checkWithPersistence, renderViolations } from './core/invariants.js'
 import { explain, renderExplanation } from './core/explain.js'
 import { inspect } from './core/inspect.js'
 import { diffTrees, loadSnapshot, renderDiff, saveSnapshot } from './core/snapshot.js'
@@ -432,9 +432,11 @@ async function main(): Promise<number> {
       case 'inspect': result = await inspect(client, f.selector); break
       case 'explain': result = renderExplanation(await explain(client, f.selector, f.property)); break
       case 'check': {
-        const violations = checkInvariants(buildTree(await extract(client)))
+        const capture = async () => checkInvariants(buildTree(await extract(client)))
+        const { violations, persistenceFiltered } = await checkWithPersistence(layoutNeverSettled(client), capture)
         if (violations.length) process.exitCode = 1
-        result = await renderViolations(client, violations)
+        result = (await renderViolations(client, violations)) +
+          (persistenceFiltered ? '\nnote: page never settled — reporting only violations stable across two captures' : '')
         break
       }
       case 'snapshot': {

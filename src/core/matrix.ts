@@ -1,7 +1,7 @@
-import { forEachViewport, pageWasBusy, type Viewport } from './connect.js'
+import { forEachViewport, layoutNeverSettled, pageWasBusy, type Viewport } from './connect.js'
 import { extract } from './extract.js'
 import { buildTree, renderTree } from './tree.js'
-import { checkInvariants, renderViolations } from './invariants.js'
+import { checkInvariants, checkWithPersistence, renderViolations } from './invariants.js'
 import { diffTrees, loadSnapshot, renderDiff, saveSnapshot } from './snapshot.js'
 import { forcePseudoStates, type PseudoStates } from './state.js'
 import { assertNoInteractNavigation, interactWasUnsettled, runInteractSteps, type InteractSteps } from './interact.js'
@@ -40,12 +40,14 @@ export async function checkMatrix(
     await runInteractSteps(client, opts.interact ?? {}, { skipSettleWait: needsAnimationCapture(opts.animate ?? {}) })
     await settleAnimations(client, opts.animate ?? {})
     if (opts.states) await forcePseudoStates(client, opts.states)
-    const violations = checkInvariants(buildTree(await extract(client)))
-    // A click's delayed redirect can land during the extract/checkInvariants capture
+    const capture = async () => checkInvariants(buildTree(await extract(client)))
+    const { violations, persistenceFiltered } = await checkWithPersistence(layoutNeverSettled(client), capture)
+    // A click's delayed redirect can land during the extract/checkInvariants capture(s)
     // above, after runInteractSteps already returned clean — check again now (see
     // interact.ts).
     assertNoInteractNavigation(client)
-    return { violations, rendered: (await renderViolations(client, violations)) + busyNote(client) }
+    const persistenceNote = persistenceFiltered ? '\nnote: page never settled — reporting only violations stable across two captures' : ''
+    return { violations, rendered: (await renderViolations(client, violations)) + persistenceNote + busyNote(client) }
   }, { ...opts, captureAnimations: needsAnimationCapture(opts.animate ?? {}) })
   const body = results.map((r) => prefixLines(r.label, r.result.rendered)).join('\n')
   const summary = results

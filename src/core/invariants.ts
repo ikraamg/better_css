@@ -167,6 +167,28 @@ const layered = (n: LayoutNode) =>
   (n.styles['transform'] ?? 'none') !== 'none' ||
   ['margin-top', 'margin-right', 'margin-bottom', 'margin-left'].some((m) => parseFloat(n.styles[m] ?? '0') < 0)
 
+function isEmptyOfContent(n: LayoutNode): boolean {
+  return !n.text && n.textBoxes.length === 0 && n.children.length === 0
+}
+
+// Field #5: an overlap where one side is a fully empty box (no text, no children) almost
+// fully covering a side that DOES have real content is the empty-async-placeholder
+// signature (a container stacked over already-rendered content while its own data hasn't
+// arrived yet), not a genuine authoring accident — suppressed. Two MUTUALLY empty boxes
+// (e.g. a real grid-cell collision, fixtures/overlap's cell-a/cell-b case) stay flagged:
+// with nothing rendered on either side there's no "real content" being hidden behind the
+// empty one, so it can't be told apart from an accident.
+function isPlaceholderOverlap(a: LayoutNode, b: LayoutNode, ix: number, iy: number): boolean {
+  const aEmpty = isEmptyOfContent(a)
+  const bEmpty = isEmptyOfContent(b)
+  if (aEmpty === bEmpty) return false // both empty (ambiguous) or both filled (not a placeholder)
+  const empty = aEmpty ? a : b
+  const full = aEmpty ? b : a
+  const emptyArea = empty.box.w * empty.box.h
+  if (emptyArea === 0 || emptyArea > full.box.w * full.box.h) return false
+  return (ix * iy) / emptyArea >= 0.95
+}
+
 function overlap(tree: BuiltTree, out: Violation[], ctx: Ctx): void {
   // collect visible nodes with ancestry chains
   const entries: Array<{ n: LayoutNode; chain: Set<LayoutNode> }> = []
@@ -192,6 +214,7 @@ function overlap(tree: BuiltTree, out: Violation[], ctx: Ctx): void {
       const ix = Math.min(a.n.box.x + a.n.box.w, b.n.box.x + b.n.box.w) - Math.max(a.n.box.x, b.n.box.x)
       const iy = Math.min(a.n.box.y + a.n.box.h, b.n.box.y + b.n.box.h) - Math.max(a.n.box.y, b.n.box.y)
       if (ix <= 4 || iy <= 4) continue // touching edges is not overlap
+      if (isPlaceholderOverlap(a.n, b.n, ix, iy)) continue // empty async placeholder (field #5)
       // opt-in check on either element or its ancestors below the common ancestor
       const common = [...a.chain].filter((x) => b.chain.has(x))
       const commonSet = new Set(common)
@@ -225,6 +248,29 @@ export function checkInvariants(tree: BuiltTree): Violation[] {
   const ctx = buildCtx(tree)
   for (const check of CHECKS) check(tree, out, ctx)
   return out
+}
+
+// Identity key for the persistence filter below (field #1) — rule + full selector.
+// Two captures 400ms apart describe the SAME DOM, so a selector staying stable across
+// both is exactly the signal that tells a persisted violation from a mid-render phantom.
+export function violationKey(v: Violation): string {
+  return `${v.rule} ${v.selector}`
+}
+
+// Field #1 persistence filter: when the post-navigation settle cap was hit (the page
+// never stabilized — connect.ts's layoutNeverSettled), one capture can still land
+// mid-render. Re-capturing ~400ms later and keeping only violations present in BOTH
+// tells a persisted bug (survives) apart from a mid-render phantom (doesn't) — cheaper
+// and more honest than blocking on a longer settle. `neverSettled` decouples this from
+// connect.ts directly, so the caller (check/verify's capture loop) supplies the fact.
+export async function checkWithPersistence(
+  neverSettled: boolean, capture: () => Promise<Violation[]>,
+): Promise<{ violations: Violation[]; persistenceFiltered: boolean }> {
+  const first = await capture()
+  if (!neverSettled) return { violations: first, persistenceFiltered: false }
+  await new Promise((r) => setTimeout(r, 400))
+  const secondKeys = new Set((await capture()).map(violationKey))
+  return { violations: first.filter((v) => secondKeys.has(violationKey(v))), persistenceFiltered: true }
 }
 
 // Violations whose root cause is usually a width the author declared but the

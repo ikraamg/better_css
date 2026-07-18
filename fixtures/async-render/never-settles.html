@@ -1,0 +1,23 @@
+<!doctype html><html><head><style>
+* { margin: 0; box-sizing: border-box; }
+.mover { width: 100px; height: 40px; background: #ccc; }
+</style></head><body>
+<div class="mover" id="mover"></div>
+<script>
+// Perpetual layout mutation (every animation frame, never stops) — models a page that
+// genuinely never stabilizes, e.g. a live-updating widget. waitForSettle's two-consecutive-
+// frame rect check can never land on a matching pair, so this always hits the settle cap.
+// Otherwise clean: no violation on the mover itself, so the persistence filter should
+// converge on an empty set.
+(function () {
+  var el = document.getElementById('mover')
+  var t = 0
+  function tick() {
+    t++
+    el.style.marginLeft = (t % 2 ? '2px' : '0px')
+    requestAnimationFrame(tick)
+  }
+  requestAnimationFrame(tick)
+})()
+</script>
+</body></html>

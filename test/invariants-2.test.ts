@@ -47,6 +47,17 @@ test('overlap: svg descendants are exempt — deliberately overlapping paths are
   expect(vs).toEqual([])
 })
 
+// Field #5: placeholder-overlap guard.
+test('overlap: a fully-empty box covering already-rendered content is suppressed (empty async placeholder)', async () => {
+  const vs = (await violationsFor('/overlap/index.html')).filter((v) => v.rule === 'overlap')
+  expect(vs.some((v) => v.selector.includes('ph-empty') || v.selector.includes('ph-content'))).toBe(false)
+})
+
+test('overlap: the placeholder guard does not suppress the genuine mutually-empty accident (cell-a/cell-b)', async () => {
+  const vs = (await violationsFor('/overlap/index.html')).filter((v) => v.rule === 'overlap')
+  expect(vs.some((v) => v.selector === 'div.cell-b')).toBe(true)
+})
+
 test('tap-target: the svg element itself still participates — a tiny <a> wrapping an svg is still a candidate', async () => {
   const vs = (await violationsFor('/svg/index.html')).filter((v) => v.rule === 'tap-target')
   expect(vs.some((v) => v.selector === 'a')).toBe(true)

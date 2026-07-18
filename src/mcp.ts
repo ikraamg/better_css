@@ -2,10 +2,10 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
-import { DEFAULT_SWEEP, pageWasBusy, parseViewport, parseViewportList, shutdownChrome, withPage } from './core/connect.js'
+import { DEFAULT_SWEEP, layoutNeverSettled, pageWasBusy, parseViewport, parseViewportList, shutdownChrome, withPage } from './core/connect.js'
 import { extract } from './core/extract.js'
 import { buildTree, findNode, renderTree } from './core/tree.js'
-import { checkInvariants, renderViolations } from './core/invariants.js'
+import { checkInvariants, checkWithPersistence, renderViolations } from './core/invariants.js'
 import { explain, renderExplanation } from './core/explain.js'
 import { inspect } from './core/inspect.js'
 import { diffTrees, loadSnapshot, renderDiff, saveSnapshot } from './core/snapshot.js'
@@ -120,8 +120,10 @@ server.tool('check', 'Run layout invariants (overflow, bleed, clipped text, unin
   ({ url: u, port: p, viewport: v, viewports: vs, hover: h, focus: fo, active: a, click: cl, scrollTo: st, settled: se, atTime: at }) => vs
     ? checkMatrix(u, parseViewportList(vs), { port: p, states: { hover: h, focus: fo, active: a }, interact: { click: cl, scrollTo: st }, animate: { settled: se, atTime: at } }).then((r) => text(r.output))
     : page(u, { port: p, viewport: v, states: { hover: h, focus: fo, active: a }, interact: { click: cl, scrollTo: st }, animate: { settled: se, atTime: at } }, async (client) => {
-      const violations = checkInvariants(buildTree(await extract(client)))
-      return renderViolations(client, violations)
+      const capture = async () => checkInvariants(buildTree(await extract(client)))
+      const { violations, persistenceFiltered } = await checkWithPersistence(layoutNeverSettled(client), capture)
+      return (await renderViolations(client, violations)) +
+        (persistenceFiltered ? '\nnote: page never settled — reporting only violations stable across two captures' : '')
     }))
 
 server.tool('fix', 'Propose (default) or APPLY mechanical patches for fixable violations (text-clip, tap-target, viewport-overflow/parent-bleed with a fixed px width) — everything else reports "no mechanical fix for <rule> — see suspect". DRY-RUN unless apply=true: prints one unified-diff-style hunk per fixable violation (file:line, -/+ lines) and writes nothing. apply=true EDITS FILES ON DISK, confined to root (path traversal from a suspect stylesheet URL is rejected — resolved and verified to stay inside root); each patch is guarded by a stale-source check (refuses a patch whose expected declaration text has drifted from where it was last seen, tolerating small line shifts — other patches in the same call still apply). After applying, automatically re-runs check and reports "before: N violations -> after: M violations" plus any NEW violations the patch introduced (regression honesty) — isError is set unless the fix strictly improved things (M < N and no new violations). When NOTHING was fixable, apply=true returns "no patches applied" with no error and no re-check (nothing attempted is not failure). selector limits which violations are attempted (substring match against the rendered selector). Inline <style>/style= suspects are never patchable — refused, with the page:line to hand-edit instead. Pass scrollTo/click/settled/atTime/hover/focus/active exactly as for check. viewports (matrix) is NOT supported — apply writes once per call; pass viewport (singular) or call fix again per viewport.',

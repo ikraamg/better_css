@@ -1,0 +1,24 @@
+<!doctype html><html><head><style>
+* { margin: 0; box-sizing: border-box; }
+.mover { width: 100px; height: 40px; background: #ccc; }
+.tiny { width: 10px; height: 10px; display: inline-block; }
+</style></head><body>
+<div class="mover" id="mover"></div>
+<a href="#" class="tiny">x</a>
+<script>
+// Same perpetual mutation as never-settles.html, PLUS a genuine, permanent bug (.tiny is
+// a 10x10 tap target, always below the 24px minimum) unrelated to the mover — present in
+// every capture, so it must SURVIVE the persistence filter (contract 2: a real bug
+// persists; a mid-render phantom doesn't).
+(function () {
+  var el = document.getElementById('mover')
+  var t = 0
+  function tick() {
+    t++
+    el.style.marginLeft = (t % 2 ? '2px' : '0px')
+    requestAnimationFrame(tick)
+  }
+  requestAnimationFrame(tick)
+})()
+</script>
+</body></html>

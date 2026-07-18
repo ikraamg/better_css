@@ -42,6 +42,11 @@ const NUMERIC_Y = /^\d+$/
 async function scrollToTarget(client: any, target: string): Promise<void> {
   if (NUMERIC_Y.test(target)) {
     await client.Runtime.evaluate({ expression: `window.scrollTo(0, ${Number(target)})` })
+    // 'scroll' listeners run on the browser's next rendering update, not synchronously
+    // with scrollTo() — wait one frame so a same-page scroll handler (e.g. a "back to
+    // top" link's display toggle) has actually run before the caller's next action
+    // (often an immediate click) reads the DOM.
+    await client.Runtime.evaluate({ expression: `new Promise((r) => requestAnimationFrame(r))`, awaitPromise: true })
     return
   }
   // resolveNode first for the suggestions error on no match, same as click; then

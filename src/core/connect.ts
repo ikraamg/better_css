@@ -3,6 +3,7 @@ import { execSync, spawn, type ChildProcess } from 'node:child_process'
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { waitForSettle } from './interact.js'
 
 const CHROME_PATHS = [
   process.env.CHROME_PATH,
@@ -118,6 +119,19 @@ export function pageWasBusy(client: object): boolean {
   return busyPages.has(client)
 }
 
+// Layout-settle gate (field #1): navigate()'s load+network-idle race (or its 10s cap)
+// only proves the DOCUMENT loaded — an app page can still be mid-render the instant it
+// resolves (flex captured before shrink, async containers still empty). One settle wait
+// here, right after navigation and before withPage's callback runs, so every capture path
+// (check/layout/inspect/explain/verify/snapshot/diff) sees a stable DOM. interact.ts's own
+// post-interact settle and animate.ts's post-seek settle are LATER-phase settles on top of
+// an already-stable start, not a repeat of this one — this only runs once, here.
+const neverSettled = new WeakSet<object>()
+export function layoutNeverSettled(client: object): boolean {
+  return neverSettled.has(client)
+}
+const NAV_SETTLE_CAP_MS = 3000
+
 export async function withPage<T>(
   url: string,
   fn: (client: any) => Promise<T>,
@@ -151,6 +165,20 @@ export async function withPage<T>(
     await client.Emulation.setDeviceMetricsOverride({ ...vp, deviceScaleFactor: 1, mobile: false })
     if (opts.beforeNavigate) await opts.beforeNavigate(client)
     await navigate(client, url)
+    if (opts.captureAnimations) {
+      // Compose, don't stack (contract 1): the caller is about to run animate.ts's
+      // settleAnimations, which freezes the page's ENTIRE animation clock and seeks
+      // deterministically from t=0 — that supersedes a real settle wait here entirely. A
+      // full wait would instead RACE a live, possibly long-running transition/animation
+      // against that freeze, burning real wall-clock time before the caller ever gets a
+      // chance to pin it (breaks the "seek is deterministic regardless of timing"
+      // contract animate.ts relies on — verified empirically against a 10s transition).
+      // One minimal pass only, mirroring interact.ts's skipSettleWait: just enough for a
+      // load-triggered animation to have registered with Animation.animationStarted.
+      await waitForSettle(client, 1)
+    } else if (!(await waitForSettle(client, NAV_SETTLE_CAP_MS))) {
+      neverSettled.add(client)
+    }
     return await fn(client)
   } finally {
     // Swallow cleanup errors: they must not mask fn's error or skip closing the tab.
