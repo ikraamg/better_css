@@ -118,6 +118,21 @@ test('sr-only: a genuinely small associated label still flags tap-target', async
   expect(flagged.some((v) => v.selector.includes('peer-small'))).toBe(true)
 })
 
+// A WRAPPING <label> (no for=) around a block toggle has an anonymous block box that
+// balloons to the container width — measuring it would mask a genuinely tiny toggle.
+// The visible child (10px) is the real target and must be measured.
+test('sr-only: a wrapping label measures its visible child, flagging a too-narrow toggle', async () => {
+  const violations = await violationsFor('/sr-only/index.html')
+  const taps = violations.filter((v) => v.rule === 'tap-target')
+  expect(taps.some((v) => v.message.includes('10x30'))).toBe(true) // the 10px toggle
+})
+
+test('sr-only: a wrapping label whose visible child is >=24px does not flag', async () => {
+  const violations = await violationsFor('/sr-only/index.html')
+  const taps = violations.filter((v) => v.rule === 'tap-target')
+  expect(taps.some((v) => v.message.includes('40x40'))).toBe(false)
+})
+
 // Field #4: pin one existing single-match message byte-identical — only /tap/index.html's
 // duplicate-class case (below) should ever grow a "(at x,y)" suffix.
 test('renderViolations: a single-match violation stays byte-identical (no position appended)', async () => {

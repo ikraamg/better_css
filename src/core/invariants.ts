@@ -1,5 +1,5 @@
 import { explain } from './explain.js'
-import { selectorOf, walk, type BuiltTree, type LayoutNode } from './tree.js'
+import { selectorOf, walk, type Box, type BuiltTree, type LayoutNode } from './tree.js'
 
 export interface Violation {
   rule: 'viewport-overflow' | 'parent-bleed' | 'zero-size' | 'text-clip' | 'overlap' | 'tap-target'
@@ -56,9 +56,30 @@ function buildLabelIndex(tree: BuiltTree): { forId: Map<string, LayoutNode>; wra
   return { forId, wrapping }
 }
 
-function labelFor(n: LayoutNode, index: ReturnType<typeof buildLabelIndex>): LayoutNode | undefined {
+// Returns the label AND whether it's a wrapping ancestor: the two need different
+// measurement. A for= label is its own separate element with a real box; a wrapping
+// <label> around a block child renders an ANONYMOUS block box that balloons to the
+// container's full width (an inline label wrapping a block), so its box is not the
+// visible tap target — the tapTargets caller measures the visible descendants instead.
+function labelFor(n: LayoutNode, index: ReturnType<typeof buildLabelIndex>): { label: LayoutNode; wrapping: boolean } | undefined {
   const byId = n.attrs['id'] ? index.forId.get(n.attrs['id']) : undefined
-  return byId ?? index.wrapping.get(n)
+  if (byId) return { label: byId, wrapping: false }
+  const wrap = index.wrapping.get(n)
+  return wrap ? { label: wrap, wrapping: true } : undefined
+}
+
+// The effective visible tap target inside a wrapping label: the union bounding box of
+// its visible, non-sr-only descendant boxes. Null when nothing visible lives inside
+// (the whole control is non-visual — treated like a bare sr-only input, exempt).
+function wrappingTargetBox(label: LayoutNode, ctx: Ctx): Box | null {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+  walk(label, (d) => {
+    if (d === label || ctx.ignored(d) || !ctx.visible(d) || isSrOnly(d)) return
+    if (d.box.w <= 0 || d.box.h <= 0) return
+    minX = Math.min(minX, d.box.x); minY = Math.min(minY, d.box.y)
+    maxX = Math.max(maxX, d.box.x + d.box.w); maxY = Math.max(maxY, d.box.y + d.box.h)
+  })
+  return maxX < minX ? null : { x: minX, y: minY, w: maxX - minX, h: maxY - minY }
 }
 
 interface Ctx {
@@ -278,16 +299,21 @@ function tapTargets(tree: BuiltTree, out: Violation[], ctx: Ctx): void {
   const labels = buildLabelIndex(tree)
   walk(tree.root, (n) => {
     if (ctx.ignored(n) || !ctx.visible(n) || !INTERACTIVE.has(n.tag)) return
-    // Field #2: an <input> with an associated <label> is measured by the LABEL's box —
-    // that's the real tap target (Tailwind `peer` switches size a sr-only input at ~1px
-    // and style the label as the visible control). A label that's ALSO under 24px is a
-    // genuine bug, still flagged — this isn't a blanket exemption for sr-only inputs.
-    // Only when no label exists does the sr-only signature exempt the element outright.
+    // Field #2: an <input> with an associated <label> is measured by the LABEL's tap
+    // target — the real control (Tailwind `peer` switches size a sr-only input at ~1px
+    // and style the label as the visible control). A for= label is its own element,
+    // measured directly; a WRAPPING label's own box is an anonymous block that balloons
+    // to container width, so its visible descendants are measured instead. A target
+    // that's still <24px is a genuine bug, flagged — not a blanket exemption. Only a
+    // bare sr-only input (no label, or a wrapping label with nothing visible) is exempt.
     let box = n.box
     if (n.tag === 'input') {
-      const label = labelFor(n, labels)
-      if (label) box = label.box
-      else if (isSrOnly(n)) return
+      const found = labelFor(n, labels)
+      if (found) {
+        const eff = found.wrapping ? wrappingTargetBox(found.label, ctx) : found.label.box
+        if (!eff) return // wrapping label with no visible target — non-visual, exempt
+        box = eff
+      } else if (isSrOnly(n)) return
     } else if (isSrOnly(n)) return
     if (box.w > 0 && box.h > 0 && (box.w < 24 || box.h < 24)) {
       report(out, n, 'tap-target', `interactive ${selectorOf(n)} is ${box.w}x${box.h}px — below the 24px minimum tap target`, `TAP:${box.w}x${box.h}`)
@@ -384,6 +410,8 @@ export async function renderViolations(client: any, violations: Violation[]): Pr
     const first = group[0]
     // Field #4: display-only — appended after grouping, never mutates v.message or the
     // group key, and stays absent whenever the selector is unambiguous (the common case).
+    // When N instances of the same selector violate, this is the FIRST instance's (x,y)
+    // (group[0]) — enough to point at a concrete element; the ×N count says there are more.
     const pos = first.x !== undefined && first.y !== undefined ? ` (at ${first.x},${first.y})` : ''
     lines.push(`${first.rule}: ${first.message}${groupSuffix(group)}${pos}`)
     if (SUSPECT_RULES.has(first.rule)) {
