@@ -1,7 +1,12 @@
 import { explain, renderExplanation, resolveNode } from './explain.js'
 
 const PROBE = `((sel) => {
-  const el = document.querySelector(sel)
+  // Field #4: check and inspect independently pick "a" matching element for a generic
+  // selector — querySelectorAll here (not just querySelector) lets inspect say when its
+  // first match isn't the only one, instead of silently describing a possibly different
+  // instance than the one the user actually meant.
+  const matches = [...document.querySelectorAll(sel)]
+  const el = matches[0]
   const probe = document.createElement(el.tagName)
   probe.style.display = 'none'
   document.body.appendChild(probe)
@@ -23,7 +28,11 @@ const PROBE = `((sel) => {
   const actual = {}
   for (const p of ['position', 'z-index', 'transform', 'opacity', 'isolation', 'filter'])
     actual[p] = cs.getPropertyValue(p)
-  return { diff, actual }
+  const others = matches.slice(1, 4).map((e) => {
+    const r = e.getBoundingClientRect()
+    return { w: Math.round(r.width), h: Math.round(r.height), x: Math.round(r.left), y: Math.round(r.top) }
+  })
+  return { diff, actual, matchCount: matches.length, others }
 })`
 
 function stackingReason(s: Record<string, string>): string | null {
@@ -59,6 +68,8 @@ export async function inspect(client: any, selector: string): Promise<string> {
   })
   const styles: Record<string, string> = result.value?.diff ?? {}
   const actual: Record<string, string> = result.value?.actual ?? {}
+  const matchCount: number = result.value?.matchCount ?? 1
+  const others: Array<{ w: number; h: number; x: number; y: number }> = result.value?.others ?? []
 
   const { model } = await client.DOM.getBoxModel({ nodeId })
   const [pt, pr, pb, pl] = side(model.padding, model.content)
@@ -73,8 +84,15 @@ export async function inspect(client: any, selector: string): Promise<string> {
   const clsAttr = cls ? '.' + cls.trim().split(/\s+/).join('.') : ''
 
   const reason = stackingReason(actual)
+  // Field #4: "3 matches; showing #1 — others: 674x72 at (24,310), …" — capped at 3
+  // others, so the user knows siblings exist before mis-diagnosing a size discrepancy
+  // (this is the exact bug: check and inspect independently landing on different
+  // same-selector instances) as something else.
+  const multiMatch = matchCount > 1
+    ? ` (${matchCount} matches; showing #1 — others: ${others.map((o) => `${o.w}x${o.h} at (${o.x},${o.y})`).join(', ')})`
+    : ''
   const lines = [
-    `${tag}${idAttr}${clsAttr}  ${Math.round(model.width)}x${Math.round(model.height)} (border-box)`,
+    `${tag}${idAttr}${clsAttr}  ${Math.round(model.width)}x${Math.round(model.height)} (border-box)${multiMatch}`,
     `  padding: ${pt} ${pr} ${pb} ${pl} | border: ${bt} ${br} ${bb} ${bl} | margin: ${mt} ${mr} ${mb} ${ml}`,
     `  stacking context: ${reason ? `yes (${reason})` : 'no'}`,
     '',

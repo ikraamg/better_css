@@ -5,7 +5,7 @@ export const STYLE_WHITELIST = [
   'margin-top', 'margin-right', 'margin-bottom', 'margin-left',
   'border-top-width', 'border-right-width', 'border-bottom-width', 'border-left-width',
   'overflow-x', 'overflow-y', 'z-index', 'visibility', 'opacity', 'transform',
-  'text-overflow', 'white-space',
+  'text-overflow', 'white-space', 'clip', 'clip-path',
 ] as const
 
 export interface RawSnapshot {

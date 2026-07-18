@@ -1,4 +1,8 @@
 <!doctype html><html><head><style>* { margin: 0; padding: 0; }</style></head><body>
+<!-- a second bare <a> (no id/class, same generic selector "a" as the flagged one below)
+     that is properly sized — reproduces field #4's disambiguation bug: the generic
+     selector matches 2 elements in the tree, but only one violates -->
+<a href="#" style="display:block;width:48px;height:48px">ok2</a>
 <a href="#" style="display:block;width:16px;height:16px;overflow:hidden">x</a>
 <button style="display:block;width:48px;height:48px">ok</button>
 </body></html>

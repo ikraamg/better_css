@@ -1,0 +1,25 @@
+<!doctype html><html><head><style>
+* { margin: 0; box-sizing: border-box; font-family: monospace; }
+/* the standard Tailwind sr-only recipe: clipped to ~1px on purpose, not a bug */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+/* a Tailwind `peer` toggle: the real, visible tap target is the label, not the input */
+.toggle-ok { display: block; width: 40px; height: 24px; background: #ccc; }
+/* deliberately still-too-small label — the exemption must not blanket-pass this */
+.toggle-small { display: block; width: 20px; height: 20px; background: #ccc; }
+.sr-span { display: inline-block; overflow: hidden; white-space: nowrap; }
+</style></head><body>
+<input type="checkbox" id="peer-ok" class="sr-only peer">
+<label for="peer-ok" class="toggle-ok">Enable dark mode</label>
+
+<input type="checkbox" id="peer-small" class="sr-only peer">
+<label for="peer-small" class="toggle-small">Enable beta</label>
+
+<span class="sr-only sr-span">This text is far longer than the 1px clipped box could ever visibly contain</span>
+</body></html>

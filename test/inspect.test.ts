@@ -25,3 +25,19 @@ test('absolute position without z-index is not a stacking context', async () => 
   const text = await withPage(`${srv.url}/overlap/index.html`, (c) => inspect(c, '.oops'))
   expect(text).toContain('stacking context: no')
 })
+
+// Field #4: /tap/index.html has two bare <a> elements — inspecting the generic
+// selector 'a' must say so, instead of silently describing whichever one
+// document.querySelector happened to pick first (the exact "check and inspect disagree"
+// field bug).
+test('multi-match note: selector matching N>1 elements names the count and the others', async () => {
+  const text = await withPage(`${srv.url}/tap/index.html`, (c) => inspect(c, 'a'))
+  const firstLine = text.split('\n')[0]
+  expect(firstLine).toContain('2 matches; showing #1')
+  expect(firstLine).toMatch(/others: \d+x\d+ at \(\d+,\d+\)/)
+})
+
+test('multi-match note: absent when the selector matches exactly one element', async () => {
+  const text = await withPage(`${srv.url}/basic/index.html`, (c) => inspect(c, '.content'))
+  expect(text.split('\n')[0]).not.toContain('matches')
+})

@@ -101,3 +101,44 @@ test('renderViolations: group key drops ids so distinct-id tap targets collapse 
   expect(lines).toHaveLength(1)
   expect(lines[0]).toContain('×3')
 })
+
+// Field #2: sr-only accessibility pattern (Tailwind `peer` toggle) must not read as a
+// tap-target or text-clip violation — it's a deliberate non-visual element.
+test('sr-only: exempt from tap-target (label-backed peer toggle) and text-clip', async () => {
+  const violations = await violationsFor('/sr-only/index.html')
+  expect(violations.filter((v) => v.rule === 'tap-target' && v.selector.includes('peer-ok'))).toEqual([])
+  expect(violations.filter((v) => v.rule === 'text-clip')).toEqual([])
+})
+
+// The exemption is NOT a blanket pass for every sr-only input: when the associated
+// <label> (the real, visible tap target) is itself under 24px, that's a genuine bug.
+test('sr-only: a genuinely small associated label still flags tap-target', async () => {
+  const violations = await violationsFor('/sr-only/index.html')
+  const flagged = violations.filter((v) => v.rule === 'tap-target')
+  expect(flagged.some((v) => v.selector.includes('peer-small'))).toBe(true)
+})
+
+// Field #4: pin one existing single-match message byte-identical — only /tap/index.html's
+// duplicate-class case (below) should ever grow a "(at x,y)" suffix.
+test('renderViolations: a single-match violation stays byte-identical (no position appended)', async () => {
+  const text = await withPage(`${srv.url}/overflow-h/index.html`, async (c) => {
+    const tree = buildTree(await extract(c))
+    return renderViolations(c, checkInvariants(tree))
+  })
+  expect(text.split('\n')[0]).toBe(
+    'viewport-overflow: page overflows viewport horizontally by 120px; widest element is div.wide (right edge 1400px > 1280px)',
+  )
+})
+
+// Field #4: /tap/index.html now has two bare <a> elements (same generic selector "a") —
+// only one violates, but the selector is ambiguous in the tree, so the violating
+// instance's own position is appended so it points at THE element, not A element.
+test('renderViolations: a generic selector matching >1 elements in the tree gets its instance position appended', async () => {
+  const text = await withPage(`${srv.url}/tap/index.html`, async (c) => {
+    const tree = buildTree(await extract(c))
+    return renderViolations(c, checkInvariants(tree))
+  })
+  const line = text.split('\n').find((l) => l.startsWith('tap-target'))!
+  expect(line).toContain('16x16')
+  expect(line).toMatch(/\(at \d+,\d+\)$/)
+})

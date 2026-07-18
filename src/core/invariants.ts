@@ -13,9 +13,53 @@ export interface Violation {
   // the offending element's parent, set where a parent is known (parent-bleed at minimum) —
   // grouping uses this to detect a group spanning distinct parents
   parentSelector?: string
+  // Field #4: the violating instance's own position, set only when `selector` (a generic
+  // tag+classes string with no id) matches more than one element in the whole tree — an
+  // id-bearing selector is already unambiguous. renderViolations appends this as display-only
+  // disambiguation so a generic class selector points at THE element, not A element (check
+  // and inspect were independently picking different same-selector instances).
+  x?: number
+  y?: number
 }
 
 const INTERACTIVE = new Set(['a', 'button', 'input', 'select', 'textarea', 'summary'])
+
+// Field #2: the sr-only accessibility pattern (screen-reader-only: clipped to ~1px on
+// purpose, e.g. Tailwind's `.sr-only` behind a `peer` toggle) reads as visible to
+// buildCtx.visible() (opacity/visibility only) — it's a deliberate non-visual element,
+// not a bug. Signature: absolutely positioned, clamped to <=2px in both dimensions,
+// clipped via overflow, and opts into either the `clip` rect or `clip-path` recipe (the
+// two competing sr-only CSS techniques across Tailwind versions).
+function isSrOnly(n: LayoutNode): boolean {
+  if (n.styles['position'] !== 'absolute') return false
+  if (n.box.w > 2 || n.box.h > 2) return false
+  const clips = (v: string | undefined) => v === 'hidden' || v === 'clip'
+  if (!clips(n.styles['overflow-x']) || !clips(n.styles['overflow-y'])) return false
+  const clip = n.styles['clip'] ?? ''
+  const clipPath = n.styles['clip-path'] ?? 'none'
+  return (clip !== '' && clip !== 'auto') || (clipPath !== '' && clipPath !== 'none')
+}
+
+// Field #2: "measure the label's box as the effective tap target, not the input's" — for
+// an interactive <input>, resolves its associated <label> via `for=` (document-order id
+// scan) or a wrapping <label> ancestor. One walk builds both lookups; no new CDP calls.
+function buildLabelIndex(tree: BuiltTree): { forId: Map<string, LayoutNode>; wrapping: WeakMap<LayoutNode, LayoutNode> } {
+  const forId = new Map<string, LayoutNode>()
+  const wrapping = new WeakMap<LayoutNode, LayoutNode>()
+  walk(tree.root, (n, parent) => {
+    if (n.tag === 'label' && n.attrs['for']) forId.set(n.attrs['for'], n)
+    if (parent) {
+      const ancestorLabel = parent.tag === 'label' ? parent : wrapping.get(parent)
+      if (ancestorLabel) wrapping.set(n, ancestorLabel)
+    }
+  })
+  return { forId, wrapping }
+}
+
+function labelFor(n: LayoutNode, index: ReturnType<typeof buildLabelIndex>): LayoutNode | undefined {
+  const byId = n.attrs['id'] ? index.forId.get(n.attrs['id']) : undefined
+  return byId ?? index.wrapping.get(n)
+}
 
 interface Ctx {
   ignored(n: LayoutNode): boolean
@@ -144,7 +188,7 @@ function zeroSize(tree: BuiltTree, out: Violation[], ctx: Ctx): void {
 
 function textClip(tree: BuiltTree, out: Violation[], ctx: Ctx): void {
   walk(tree.root, (n) => {
-    if (ctx.ignored(n) || !ctx.visible(n) || n.textBoxes.length === 0) return
+    if (ctx.ignored(n) || !ctx.visible(n) || n.textBoxes.length === 0 || isSrOnly(n)) return
     const clips = ['hidden', 'clip'].includes(n.styles['overflow-x'] ?? '')
     if (!clips || n.styles['text-overflow'] === 'ellipsis') return
     // browsers clip at the padding-box edge, same boundary parentBleed uses
@@ -231,10 +275,22 @@ function overlap(tree: BuiltTree, out: Violation[], ctx: Ctx): void {
 }
 
 function tapTargets(tree: BuiltTree, out: Violation[], ctx: Ctx): void {
+  const labels = buildLabelIndex(tree)
   walk(tree.root, (n) => {
     if (ctx.ignored(n) || !ctx.visible(n) || !INTERACTIVE.has(n.tag)) return
-    if (n.box.w > 0 && n.box.h > 0 && (n.box.w < 24 || n.box.h < 24)) {
-      report(out, n, 'tap-target', `interactive ${selectorOf(n)} is ${n.box.w}x${n.box.h}px — below the 24px minimum tap target`, `TAP:${n.box.w}x${n.box.h}`)
+    // Field #2: an <input> with an associated <label> is measured by the LABEL's box —
+    // that's the real tap target (Tailwind `peer` switches size a sr-only input at ~1px
+    // and style the label as the visible control). A label that's ALSO under 24px is a
+    // genuine bug, still flagged — this isn't a blanket exemption for sr-only inputs.
+    // Only when no label exists does the sr-only signature exempt the element outright.
+    let box = n.box
+    if (n.tag === 'input') {
+      const label = labelFor(n, labels)
+      if (label) box = label.box
+      else if (isSrOnly(n)) return
+    } else if (isSrOnly(n)) return
+    if (box.w > 0 && box.h > 0 && (box.w < 24 || box.h < 24)) {
+      report(out, n, 'tap-target', `interactive ${selectorOf(n)} is ${box.w}x${box.h}px — below the 24px minimum tap target`, `TAP:${box.w}x${box.h}`)
     }
   })
 }
@@ -247,7 +303,28 @@ export function checkInvariants(tree: BuiltTree): Violation[] {
   const out: Violation[] = []
   const ctx = buildCtx(tree)
   for (const check of CHECKS) check(tree, out, ctx)
+  annotateInstancePositions(tree, out)
   return out
+}
+
+// Field #4: stamps (x,y) onto a violation only when its generic selector (selectorOf —
+// tag + up to 3 classes, id included when present) matches more than one element in the
+// WHOLE tree, not just among the violations. An id-bearing selector is already unique, so
+// it's left alone. renderViolations decides whether to actually print the position.
+function annotateInstancePositions(tree: BuiltTree, out: Violation[]): void {
+  if (!out.length) return
+  const counts = new Map<string, number>()
+  const byBackendId = new Map<number, LayoutNode>()
+  walk(tree.root, (n) => {
+    counts.set(selectorOf(n), (counts.get(selectorOf(n)) ?? 0) + 1)
+    byBackendId.set(n.backendNodeId, n)
+  })
+  for (const v of out) {
+    if ((counts.get(v.selector) ?? 0) > 1) {
+      const n = byBackendId.get(v.backendNodeId)
+      if (n) { v.x = n.box.x; v.y = n.box.y }
+    }
+  }
 }
 
 // Identity key for the persistence filter below (field #1) — rule + full selector.
@@ -305,7 +382,10 @@ export async function renderViolations(client: any, violations: Violation[]): Pr
   const lines: string[] = []
   for (const group of groups.values()) {
     const first = group[0]
-    lines.push(`${first.rule}: ${first.message}${groupSuffix(group)}`)
+    // Field #4: display-only — appended after grouping, never mutates v.message or the
+    // group key, and stays absent whenever the selector is unambiguous (the common case).
+    const pos = first.x !== undefined && first.y !== undefined ? ` (at ${first.x},${first.y})` : ''
+    lines.push(`${first.rule}: ${first.message}${groupSuffix(group)}${pos}`)
     if (SUSPECT_RULES.has(first.rule)) {
       const e = await explain(client, { backendNodeId: first.backendNodeId }, 'width', first.selector).catch(() => null)
       const w = e?.entries.find((x) => x.status === 'winner')
