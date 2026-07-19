@@ -1,6 +1,6 @@
 {
   "name": "csstruth",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Hard ground truth for CSS — extracts the browser's rendered layout as deterministic, diffable text so coding agents stop guessing. MCP server + CLI.",
   "keywords": [
     "css",
