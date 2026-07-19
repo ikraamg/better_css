@@ -254,6 +254,26 @@ function isPlaceholderOverlap(a: LayoutNode, b: LayoutNode, ix: number, iy: numb
   return (ix * iy) / emptyArea >= 0.95
 }
 
+// Field NEXT-1: a static child that horizontally overflows an intermediate container C
+// laps whatever sits in the escaped strip — the lapped cousin did nothing wrong. True when
+// `node` bleeds past some ancestor C's padding box (C strictly between the a/b common
+// ancestor and node) on the side the overlap strip sits, so the collision is a *consequence*
+// of that escape. Horizontal only, on purpose: parent-bleed already reports the escaper
+// bleeding C on the horizontal axis, so suppressing the cousin-overlap here never hides a
+// defect. A vertical-only escape is NOT yet parent-bleed-covered, so it stays flagged (a
+// silently-dropped check would be worse than a false positive).
+function escapesIntermediateContainer(
+  node: LayoutNode, chain: Set<LayoutNode>, common: Set<LayoutNode>, ovLeft: number, ovRight: number,
+): boolean {
+  for (const c of chain) {
+    if (c === node || common.has(c)) continue
+    const pad = padBoxOf(c)
+    if (node.box.x + node.box.w > pad.right + 1 && ovRight > pad.right + 1) return true
+    if (node.box.x < pad.left - 1 && ovLeft < pad.left - 1) return true
+  }
+  return false
+}
+
 function overlap(tree: BuiltTree, out: Violation[], ctx: Ctx): void {
   // collect visible nodes with ancestry chains
   const entries: Array<{ n: LayoutNode; chain: Set<LayoutNode> }> = []
@@ -286,6 +306,10 @@ function overlap(tree: BuiltTree, out: Violation[], ctx: Ctx): void {
       const optedIn = (e: { chain: Set<LayoutNode> }) =>
         [...e.chain].some((x) => !commonSet.has(x) && layered(x))
       if (optedIn(a) || optedIn(b)) continue
+      const ovLeft = Math.max(a.n.box.x, b.n.box.x)
+      const ovRight = Math.min(a.n.box.x + a.n.box.w, b.n.box.x + b.n.box.w)
+      if (escapesIntermediateContainer(a.n, a.chain, commonSet, ovLeft, ovRight) ||
+          escapesIntermediateContainer(b.n, b.chain, commonSet, ovLeft, ovRight)) continue
       report(out, b.n, 'overlap',
         `${selectorOf(b.n)} overlaps ${selectorOf(a.n)} by ${ix}x${iy}px with no layering opt-in (position+z-index, transform, or negative margin)`,
         `OVERLAP:${selectorOf(a.n)}`)
