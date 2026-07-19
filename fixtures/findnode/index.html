@@ -1,0 +1,11 @@
+<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><style>
+* { margin: 0; box-sizing: border-box; }
+</style></head><body>
+<!-- header carries an id, so selectorOf is "header#top" — a bare-tag query must still find it -->
+<header id="top"><nav class="a b c d">nav</nav></header>
+<!-- 4 classes, so selectorOf truncates to the first 3 — a 2-class subset query must still match -->
+<section class="card featured wide tall">card</section>
+<!-- Tailwind arbitrary values with an inner dot / # — the compound parser can't tokenize
+     these, so they must resolve via the raw-class fallback, not silently miss -->
+<div class="gap-[0.5rem] bg-[#fff]">arb</div>
+</body></html>

@@ -109,10 +109,29 @@ export function selectorOf(n: LayoutNode): string {
   return n.tag + (n.id ? `#${n.id}` : '') + n.classes.slice(0, 3).map((c) => `.${c}`).join('')
 }
 
-// First-match lookup by rendered selector, #id, or .class — shared by the CLI's
-// and MCP's layout-scoping (--selector / selector param).
+// First-match lookup by a simple compound selector (tag + #id + class SUBSET) — the intuition
+// inspect/explain already give, so `layout --selector nav` (bare tag on a classed element) and
+// `--selector div.card.featured` (a subset of >3 classes) resolve, not only the exact rendered
+// selectorOf string. Matching n.classes directly means Tailwind classes (md:flex, w-[...]) need
+// no escaping. Anything the compound parser can't handle (combinators/attributes/pseudos, or a
+// dotted/#-bearing arbitrary value) falls back to the raw selectorOf / #id / .class shorthands
+// the old contract matched. Shared by the CLI's and MCP's layout-scoping (--selector param).
 export function findNode(tree: BuiltTree, selector: string): LayoutNode | undefined {
+  const m = selector.match(/^([a-zA-Z][\w-]*)?(?:#([\w-]+))?((?:\.[^.#\s>+~]+)*)$/)
   let found: LayoutNode | undefined
+  if (m && (m[1] || m[2] || m[3])) {
+    const [, tag, id, classStr] = m
+    const classes = classStr ? classStr.split('.').filter(Boolean) : []
+    walk(tree.root, (n) => {
+      if (found) return
+      if (tag && n.tag !== tag.toLowerCase()) return
+      if (id && n.id !== id) return
+      if (classes.every((c) => n.classes.includes(c))) found = n
+    })
+    if (found) return found
+  }
+  // Fall back to the raw shorthands the old contract matched — recovers a dotted or #-bearing
+  // Tailwind arbitrary value (.gap-[0.5rem], .bg-[#fff]) the compound parser can't tokenize.
   walk(tree.root, (n) => {
     if (found) return
     if (selectorOf(n) === selector || n.id === selector.replace('#', '') ||
