@@ -52,6 +52,30 @@ test('parent-bleed: flags static child exceeding parent, not scroll containers',
   expect(renderTree(tree)).toContain('⚠BLEED:+100px')
 })
 
+// Field NEXT-1c: parent-bleed exempts deliberately-displaced children (matching overlap's
+// intent), but NOT a bare position:relative with no offset — that still bleeds for real.
+test('parent-bleed: deliberately displaced children (negative margin, transform, positioned+offset) are exempt', async () => {
+  const { violations } = await violationsFor('/displaced/index.html')
+  const bleeds = violations.filter((v) => v.rule === 'parent-bleed')
+  for (const sel of ['div.pull', 'div.shifted', 'div.xformed']) {
+    expect(bleeds.some((v) => v.selector === sel)).toBe(false)
+  }
+})
+
+test('parent-bleed: a bare position:relative child (no offset) that overflows is still flagged', async () => {
+  const { violations } = await violationsFor('/displaced/index.html')
+  const bleeds = violations.filter((v) => v.rule === 'parent-bleed')
+  expect(bleeds.some((v) => v.selector === 'div.bare-rel')).toBe(true)
+})
+
+// A non-translating transform (translateZ(0), a compositing hack) does not move the box —
+// exempting it would silently drop a real overflow, so it stays flagged.
+test('parent-bleed: a non-translating transform does not exempt a real overflow', async () => {
+  const { violations } = await violationsFor('/displaced/index.html')
+  const bleeds = violations.filter((v) => v.rule === 'parent-bleed')
+  expect(bleeds.some((v) => v.selector === 'div.gpu')).toBe(true)
+})
+
 test('zero-size: flags invisible interactive element, honors ignore attr', async () => {
   const { violations, tree } = await violationsFor('/zero-size/index.html')
   const zeros = violations.filter((v) => v.rule === 'zero-size')

@@ -144,10 +144,12 @@ function viewportOverflow(tree: BuiltTree, out: Violation[], ctx: Ctx): void {
 const CLIPS_X = new Set(['auto', 'scroll', 'hidden', 'clip'])
 
 // bleed boundary is a node's padding box, per spec
-function padBoxOf(n: LayoutNode): { left: number; right: number } {
+function padBoxOf(n: LayoutNode): { left: number; right: number; top: number; bottom: number } {
   return {
     left: n.box.x + Math.round(parseFloat(n.styles['border-left-width'] ?? '0')),
     right: n.box.x + n.box.w - Math.round(parseFloat(n.styles['border-right-width'] ?? '0')),
+    top: n.box.y + Math.round(parseFloat(n.styles['border-top-width'] ?? '0')),
+    bottom: n.box.y + n.box.h - Math.round(parseFloat(n.styles['border-bottom-width'] ?? '0')),
   }
 }
 
@@ -177,6 +179,55 @@ function checkBleed(n: LayoutNode, ancestors: LayoutNode[], out: Violation[]): v
       `${selectorOf(n)} bleeds ${over}px outside ${selectorOf(parent)} (child ${n.box.w}px wide, parent ${parent.box.w}px)`,
       `BLEED:+${over}px`, { px: over, parentSelector: selectorOf(parent) })
   }
+  // Field NEXT-1b: vertical mirror — a child taller than a height-constrained container
+  // bleeds top/bottom, clamped by the nearest overflow-y clip exactly as the horizontal
+  // case clamps to overflow-x. A normal-flow block parent grows to fit its children, so this
+  // only fires where the parent's height is genuinely constrained (fixed height, flex/grid).
+  let clipY: LayoutNode | null = null
+  for (let i = ancestors.length - 1; i >= 0; i--) {
+    if (CLIPS_X.has(ancestors[i].styles['overflow-y'] ?? '')) { clipY = ancestors[i]; break }
+  }
+  let visBottom = n.box.y + n.box.h
+  let visTop = n.box.y
+  if (clipY) {
+    const clipBox = padBoxOf(clipY)
+    visBottom = Math.min(visBottom, clipBox.bottom)
+    visTop = Math.max(visTop, clipBox.top)
+  }
+  const overY = Math.max(visBottom - padBox.bottom, padBox.top - visTop)
+  if (overY > 1) {
+    report(out, n, 'parent-bleed',
+      `${selectorOf(n)} bleeds ${overY}px outside ${selectorOf(parent)} (child ${n.box.h}px tall, parent ${parent.box.h}px)`,
+      `BLEED:+${overY}px`, { px: overY, parentSelector: selectorOf(parent) })
+  }
+}
+
+// A transform "moves the box" only if its matrix carries a non-zero 2D translation. Chrome
+// computes every transform to matrix(a,b,c,d,e,f) (translate = e,f) or matrix3d(...) (2D
+// translate = m41,m42 at indices 12,13), so translateZ(0)/scale(1)/rotate(0) — the common
+// GPU-compositing no-ops — resolve to zero 2D translation and must NOT count as displacement
+// (exempting them would silently drop a real overflow). Only 2D translation counts here: a
+// rotate/perspective that moves the painted box by other means still flags — the safer
+// direction (a rare false positive over a hidden bleed).
+function translatesBox(transform: string | undefined): boolean {
+  const m = (transform ?? 'none').match(/^matrix(3d)?\(([^)]+)\)$/)
+  if (!m) return false
+  const n = m[2].split(',').map((s) => parseFloat(s))
+  return m[1] ? (n[12] ?? 0) !== 0 || (n[13] ?? 0) !== 0 : (n[4] ?? 0) !== 0 || (n[5] ?? 0) !== 0
+}
+
+// Field NEXT-1c: a child moved out of its normal box ON PURPOSE — a translating transform, a
+// negative margin, or a non-static position with a real inset offset — is intentional layout,
+// not an accidental parent-bleed. A bare position:relative (all insets auto/0) is NOT
+// displaced: it sits in normal flow, so a genuine overflow there is still worth flagging.
+function displaced(n: LayoutNode): boolean {
+  if (translatesBox(n.styles['transform'])) return true
+  if (['margin-top', 'margin-right', 'margin-bottom', 'margin-left'].some((m) => parseFloat(n.styles[m] ?? '0') < 0)) return true
+  if ((n.styles['position'] ?? 'static') === 'static') return false
+  return ['top', 'right', 'bottom', 'left'].some((k) => {
+    const v = n.styles[k]
+    return v !== undefined && v !== 'auto' && parseFloat(v) !== 0
+  })
 }
 
 function parentBleed(tree: BuiltTree, out: Violation[], ctx: Ctx): void {
@@ -185,7 +236,8 @@ function parentBleed(tree: BuiltTree, out: Violation[], ctx: Ctx): void {
     const parent = ancestors[ancestors.length - 1]
     if (parent && !ctx.ignored(n) && ctx.visible(n)) {
       const pos = n.styles['position']
-      if (pos !== 'absolute' && pos !== 'fixed') checkBleed(n, ancestors, out) // positioned children escape on purpose
+      // absolute/fixed escape on purpose; so does a deliberately-displaced child (field NEXT-1c)
+      if (pos !== 'absolute' && pos !== 'fixed' && !displaced(n)) checkBleed(n, ancestors, out)
     }
     ancestors.push(n)
     for (const c of n.children) visit(c)
@@ -254,22 +306,24 @@ function isPlaceholderOverlap(a: LayoutNode, b: LayoutNode, ix: number, iy: numb
   return (ix * iy) / emptyArea >= 0.95
 }
 
-// Field NEXT-1: a static child that horizontally overflows an intermediate container C
-// laps whatever sits in the escaped strip — the lapped cousin did nothing wrong. True when
+// Field NEXT-1 (+1b): a static child that overflows an intermediate container C laps
+// whatever sits in the escaped strip — the lapped cousin did nothing wrong. True when
 // `node` bleeds past some ancestor C's padding box (C strictly between the a/b common
 // ancestor and node) on the side the overlap strip sits, so the collision is a *consequence*
-// of that escape. Horizontal only, on purpose: parent-bleed already reports the escaper
-// bleeding C on the horizontal axis, so suppressing the cousin-overlap here never hides a
-// defect. A vertical-only escape is NOT yet parent-bleed-covered, so it stays flagged (a
-// silently-dropped check would be worse than a false positive).
+// of that escape. Both axes: parent-bleed reports the escaper bleeding C horizontally AND
+// vertically (field NEXT-1b), so suppressing the cousin-overlap here never hides a defect —
+// the real bug is surfaced as the escaper's parent-bleed.
 function escapesIntermediateContainer(
-  node: LayoutNode, chain: Set<LayoutNode>, common: Set<LayoutNode>, ovLeft: number, ovRight: number,
+  node: LayoutNode, chain: Set<LayoutNode>, common: Set<LayoutNode>,
+  ovLeft: number, ovRight: number, ovTop: number, ovBottom: number,
 ): boolean {
   for (const c of chain) {
     if (c === node || common.has(c)) continue
     const pad = padBoxOf(c)
     if (node.box.x + node.box.w > pad.right + 1 && ovRight > pad.right + 1) return true
     if (node.box.x < pad.left - 1 && ovLeft < pad.left - 1) return true
+    if (node.box.y + node.box.h > pad.bottom + 1 && ovBottom > pad.bottom + 1) return true
+    if (node.box.y < pad.top - 1 && ovTop < pad.top - 1) return true
   }
   return false
 }
@@ -308,8 +362,10 @@ function overlap(tree: BuiltTree, out: Violation[], ctx: Ctx): void {
       if (optedIn(a) || optedIn(b)) continue
       const ovLeft = Math.max(a.n.box.x, b.n.box.x)
       const ovRight = Math.min(a.n.box.x + a.n.box.w, b.n.box.x + b.n.box.w)
-      if (escapesIntermediateContainer(a.n, a.chain, commonSet, ovLeft, ovRight) ||
-          escapesIntermediateContainer(b.n, b.chain, commonSet, ovLeft, ovRight)) continue
+      const ovTop = Math.max(a.n.box.y, b.n.box.y)
+      const ovBottom = Math.min(a.n.box.y + a.n.box.h, b.n.box.y + b.n.box.h)
+      if (escapesIntermediateContainer(a.n, a.chain, commonSet, ovLeft, ovRight, ovTop, ovBottom) ||
+          escapesIntermediateContainer(b.n, b.chain, commonSet, ovLeft, ovRight, ovTop, ovBottom)) continue
       report(out, b.n, 'overlap',
         `${selectorOf(b.n)} overlaps ${selectorOf(a.n)} by ${ix}x${iy}px with no layering opt-in (position+z-index, transform, or negative margin)`,
         `OVERLAP:${selectorOf(a.n)}`)

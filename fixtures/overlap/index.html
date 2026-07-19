@@ -38,6 +38,13 @@ header { height: 64px; background: #eee; }
 .escape-container { flex: none; width: 120px; height: 80px; overflow: visible; background: #ddd; }
 .escaper { width: 260px; height: 60px; background: coral; }
 .escape-cousin { flex: none; width: 200px; height: 80px; background: lightblue; }
+/* vertical twin of the escape-row (field NEXT-1b): .vescaper (200px tall) overflows its
+   80px container downward into .vcousin (the next column item, at y=80). Exercises both the
+   vertical parent-bleed and the vertical escape-suppression. */
+.escape-col { display: flex; flex-direction: column; align-items: flex-start; }
+.vcontainer { flex: none; width: 120px; height: 80px; overflow: visible; background: #ddd; }
+.vescaper { width: 100px; height: 200px; background: coral; }
+.vcousin { flex: none; width: 120px; height: 100px; background: lightblue; }
 </style></head><body>
 <header></header>
 <div class="oops"></div>
@@ -59,5 +66,9 @@ header { height: 64px; background: #eee; }
 <div class="escape-row">
   <div class="escape-container"><div class="escaper">child</div></div>
   <div class="escape-cousin">cousin</div>
+</div>
+<div class="escape-col">
+  <div class="vcontainer"><div class="vescaper">child</div></div>
+  <div class="vcousin">cousin</div>
 </div>
 </body></html>

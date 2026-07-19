@@ -1,0 +1,20 @@
+<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><style>
+* { margin: 0; box-sizing: border-box; }
+.parent { width: 200px; height: 60px; }
+/* Field NEXT-1c: a child DELIBERATELY displaced out of its box is intentional, not an
+   accidental bleed — exempt from parent-bleed (both axes). Three ways to displace: */
+.pull { width: 250px; height: 40px; margin-left: -30px; background: teal; }               /* negative margin */
+.shifted { width: 250px; height: 40px; position: relative; left: 20px; background: teal; } /* positioned + real inset */
+.xformed { width: 250px; height: 40px; transform: translateX(10px); background: teal; }    /* transform that MOVES */
+/* a bare position:relative with NO offset is still in normal flow: a genuine bleed, flagged. */
+.bare-rel { width: 250px; height: 40px; position: relative; background: teal; }
+/* a non-translating transform (translateZ(0)/scale(1)/rotate(0) — a GPU-compositing hack)
+   does NOT move the box, so an overflow under it is a genuine bleed, still flagged. */
+.gpu { width: 250px; height: 40px; transform: translateZ(0); background: teal; }
+</style></head><body>
+<div class="parent"><div class="pull"></div></div>
+<div class="parent"><div class="shifted"></div></div>
+<div class="parent"><div class="xformed"></div></div>
+<div class="parent"><div class="bare-rel"></div></div>
+<div class="parent"><div class="gpu"></div></div>
+</body></html>
