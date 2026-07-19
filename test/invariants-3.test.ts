@@ -76,7 +76,9 @@ test('renderViolations: same-parent children with different bleed amounts get no
   })
   const lines = text.split('\n').filter((l) => l.startsWith('parent-bleed') && l.includes('div.leak'))
   expect(lines).toHaveLength(1)
-  expect(lines[0]).toContain('×2')
+  // two horizontal leaks + the second leak's own 20px vertical bleed past shared-parent
+  // (field NEXT-1b) = 3 in the group; still one line, still same-parent (no "across").
+  expect(lines[0]).toContain('×3')
   expect(lines[0]).not.toContain('across')
 })
 

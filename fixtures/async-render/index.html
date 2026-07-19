@@ -17,7 +17,9 @@
 /* Field #1: "empty async parents stacked" — two static, unpositioned siblings placed in
    the same grid cell (same technique as fixtures/overlap's genuine-accident case) until a
    real transition moves the second one clear, over the same 1s window. */
-.grid-wrap { display: grid; grid-template-columns: 200px; grid-template-rows: 80px; }
+/* row is tall enough to hold panel-b once its margin-top:70px separates it, so this
+   fixture's settle/overlap concern isn't confused by an incidental vertical bleed. */
+.grid-wrap { display: grid; grid-template-columns: 200px; grid-template-rows: 140px; }
 .panel-a, .panel-b { grid-row: 1; grid-column: 1; width: 150px; height: 60px; }
 .panel-a { background: gold; }
 .panel-b { background: plum; transition: margin-top 1s linear; }

@@ -6,6 +6,9 @@ export const STYLE_WHITELIST = [
   'border-top-width', 'border-right-width', 'border-bottom-width', 'border-left-width',
   'overflow-x', 'overflow-y', 'z-index', 'visibility', 'opacity', 'transform',
   'text-overflow', 'white-space', 'clip', 'clip-path',
+  // insets — used only to tell a deliberately-offset positioned child (exempt from
+  // parent-bleed, field NEXT-1c) from a bare position:relative that still bleeds for real.
+  'top', 'right', 'bottom', 'left',
 ] as const
 
 export interface RawSnapshot {

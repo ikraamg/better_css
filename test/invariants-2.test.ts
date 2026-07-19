@@ -71,6 +71,20 @@ test('overlap: suppressing the cousin does not hide the real defect — the esca
   expect(vs.some((v) => v.selector === 'div.escaper')).toBe(true)
 })
 
+// Field NEXT-1b: the vertical twin. parent-bleed must cover the vertical axis first, so the
+// vertical escape suppression never drops a defect (same non-hiding guarantee as horizontal).
+test('parent-bleed: a child taller than its container bleeds vertically', async () => {
+  const vs = (await violationsFor('/overlap/index.html')).filter((v) => v.rule === 'parent-bleed')
+  const hit = vs.find((v) => v.selector === 'div.vescaper')
+  expect(hit).toBeDefined()
+  expect(hit!.message).toContain('tall')
+})
+
+test('overlap: a cousin lapped by a descendant that overflowed its container vertically is not flagged', async () => {
+  const vs = (await violationsFor('/overlap/index.html')).filter((v) => v.rule === 'overlap')
+  expect(vs.some((v) => v.selector === 'div.vcousin')).toBe(false)
+})
+
 test('tap-target: the svg element itself still participates — a tiny <a> wrapping an svg is still a candidate', async () => {
   const vs = (await violationsFor('/svg/index.html')).filter((v) => v.rule === 'tap-target')
   expect(vs.some((v) => v.selector === 'a')).toBe(true)
