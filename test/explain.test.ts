@@ -1,9 +1,9 @@
 import { afterAll, expect, test } from 'vitest'
 import { serveFixtures } from './helpers/server.js'
 import { withPage, shutdownChrome } from '../src/core/connect.js'
-import { explain, renderExplanation } from '../src/core/explain.js'
+import { explain, renderExplanation, escapeCssSelector } from '../src/core/explain.js'
 import { extract } from '../src/core/extract.js'
-import { buildTree, walk } from '../src/core/tree.js'
+import { buildTree, walk, selectorOf } from '../src/core/tree.js'
 
 const srv = await serveFixtures('fixtures')
 afterAll(async () => { srv.close(); await shutdownChrome() })
@@ -127,6 +127,28 @@ test('explain resolves a node by backendNodeId, bypassing selector escaping enti
   })
   expect(winner?.value).toBe('300px')
   expect(winner?.file).toContain('tailwindish')
+})
+
+// The tool's own selectorOf output must round-trip back in as a STRING selector — a
+// Tailwind variant/arbitrary-value class (md:flex, w-[calc(100%-2rem)]) carries chars
+// querySelector reads as syntax; resolveNode now escapes-and-retries on failure.
+test('explain resolves a node by its own rendered selector, even with Tailwind special chars', async () => {
+  const winner = await withPage(`${srv.url}/tailwindish/index.html`, async (c) => {
+    const tree = buildTree(await extract(c))
+    let target: any
+    walk(tree.root, (n) => { if (n.classes.some((cl) => cl.startsWith('w-[')) && !target) target = n })
+    const e = await explain(c, selectorOf(target), 'width') // feed the tool's own output back in
+    return e.entries.find((x) => x.status === 'winner')
+  })
+  expect(winner?.value).toBe('300px')
+})
+
+test('escapeCssSelector escapes Tailwind variant/arbitrary chars, leaves structural ones', () => {
+  expect(escapeCssSelector('md:flex')).toBe('md\\:flex')
+  // data-attribute variants (shadcn/Radix) — the = and [] must be escaped
+  expect(escapeCssSelector('data-[state=open]:flex')).toBe('data-\\[state\\=open\\]\\:flex')
+  expect(escapeCssSelector("content-'x'")).toBe("content-\\'x\\'") // quotes escaped
+  expect(escapeCssSelector('.a > .b + .c')).toBe('.a > .b + .c')   // structural + combinators untouched
 })
 
 test('a stale backendNodeId throws a clear error', async () => {
