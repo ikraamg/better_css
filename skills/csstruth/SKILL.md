@@ -55,6 +55,22 @@ with late-loading images, fonts, or ads, also run `stability` — it reports
 Cumulative Layout Shift with the exact element that moved, when, and any
 unsized `img`/`video` suspect.
 
+## Selectors
+
+Every selector csstruth PRINTS round-trips straight back into it. Copy a
+`layout`/`check` line's selector — Tailwind variant and arbitrary-value classes
+included (`div.hidden.md:flex`, `.w-[calc(100%-2rem)]`, `.data-[state=open]:flex`)
+— into `inspect`/`explain`/`layout`; the special characters are escaped for you.
+
+`layout`/`inspect`/`explain` accept a simple compound selector: a bare tag
+(`nav`), an `#id`, a single class, or a class SUBSET — `div.card.featured` matches
+an element carrying those classes among others. When a generic selector matches
+more than one element, `inspect` names the count and the other instances' boxes so
+you know which one you're looking at.
+
+To find WHEN a layout bug was introduced, `blame <url>` walks recent commits in a
+throwaway worktree and names the commit that first broke the invariant.
+
 ## Interaction and animation states
 
 `hover`/`focus`/`active` params (a CSS selector each) force pseudo-state
@@ -76,9 +92,15 @@ frame isn't a reproducible baseline).
 ## Reading violations
 
 `check`/`verify` violations are tuned to be real bugs: viewport overflow,
-visible parent bleed, clipped text, un-layered overlap, zero-size/tiny tap
-targets — each with exact px and a `suspect: <rule> @ file:line`. For a
-genuinely intentional pattern (animated counters, marquees), add
+visible parent bleed (both axes), clipped text, un-layered overlap, zero-size/
+tiny tap targets — each with exact px and a `suspect: <rule> @ file:line`.
+Common intentional patterns are already exempt so they don't cry wolf: SVG
+internals, sr-only controls (the visible label is measured instead), empty
+async placeholders, deliberately-displaced children (negative margin / a
+translating transform / positioned-with-offset), a child that escaped its own
+container and lapped a cousin (reported as the child's parent-bleed, not a
+sibling overlap), and a text link inline in a sentence (WCAG 2.5.8). For any
+OTHER intentional pattern (animated counters, marquees), add
 `data-csstruth-ignore` to that element rather than arguing with the check.
 
 ## Adopting on a page that isn't clean yet — baselines
