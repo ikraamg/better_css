@@ -1,11 +1,14 @@
-import { explain, renderExplanation, resolveNode } from './explain.js'
+import { explain, renderExplanation, resolveNode, escapeCssSelector } from './explain.js'
 
-const PROBE = `((sel) => {
+const PROBE = `((sel, escSel) => {
   // Field #4: check and inspect independently pick "a" matching element for a generic
   // selector — querySelectorAll here (not just querySelector) lets inspect say when its
   // first match isn't the only one, instead of silently describing a possibly different
-  // instance than the one the user actually meant.
-  const matches = [...document.querySelectorAll(sel)]
+  // instance than the one the user actually meant. Raw first, then the escaped fallback so a
+  // Tailwind selector (querySelector-invalid) still resolves — mirrors resolveNode.
+  let matches
+  try { matches = [...document.querySelectorAll(sel)] }
+  catch { matches = [...document.querySelectorAll(escSel)] }
   const el = matches[0]
   const probe = document.createElement(el.tagName)
   probe.style.display = 'none'
@@ -64,7 +67,7 @@ export async function inspect(client: any, selector: string): Promise<string> {
   const nodeId = await resolveNode(client, selector)
 
   const { result } = await client.Runtime.evaluate({
-    expression: `${PROBE}(${JSON.stringify(selector)})`, returnByValue: true,
+    expression: `${PROBE}(${JSON.stringify(selector)}, ${JSON.stringify(escapeCssSelector(selector))})`, returnByValue: true,
   })
   const styles: Record<string, string> = result.value?.diff ?? {}
   const actual: Record<string, string> = result.value?.actual ?? {}

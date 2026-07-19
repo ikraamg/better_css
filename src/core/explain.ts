@@ -95,10 +95,29 @@ function getRoot(client: any): Promise<number> {
   return root
 }
 
+// selectorOf emits raw class names, and Tailwind variant/arbitrary-value classes (md:flex,
+// w-[calc(100%-2rem)], data-[state=open]:flex, content-['x']) carry chars querySelector reads
+// as syntax, so the tool's own output can't be fed back in. Escape every char that is not a
+// CSS identifier char or a structural selector char (.#>+~*, whitespace, backslash) — an
+// allowlist, so a Tailwind offender never has to be enumerated by hand. Applied only as a
+// retry after the raw selector fails to MATCH, so a selector that matches raw is untouched;
+// note a state pseudo like :hover matches nothing in a static snapshot and does fall through
+// to the escaped retry (at worst resolving a same-named literal class). Inner-dot arbitrary
+// values (w-[1.5rem]) and #-in-brackets (bg-[#fff]) collide with the class/id separators and
+// stay unresolvable by string — use a backendNodeId for those.
+export function escapeCssSelector(s: string): string {
+  return s.replace(/[^\w.#>+~*\\\s-]/g, '\\$&')
+}
+
 export async function resolveNode(client: any, selector: string): Promise<number> {
   const rootNodeId = await getRoot(client)
-  const { nodeId } = await client.DOM.querySelector({ nodeId: rootNodeId, selector }).catch(() => ({ nodeId: 0 }))
-  if (nodeId) return nodeId
+  let hit = await client.DOM.querySelector({ nodeId: rootNodeId, selector }).catch(() => ({ nodeId: 0 }))
+  if (hit.nodeId) return hit.nodeId
+  const escaped = escapeCssSelector(selector)
+  if (escaped !== selector) {
+    hit = await client.DOM.querySelector({ nodeId: rootNodeId, selector: escaped }).catch(() => ({ nodeId: 0 }))
+    if (hit.nodeId) return hit.nodeId
+  }
   // suggestions: all class/id selectors present on the page
   const { result } = await client.Runtime.evaluate({
     expression: `[...new Set([...document.querySelectorAll('[class],[id]')].flatMap(e =>

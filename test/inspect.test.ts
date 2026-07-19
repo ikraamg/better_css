@@ -41,3 +41,11 @@ test('multi-match note: absent when the selector matches exactly one element', a
   const text = await withPage(`${srv.url}/basic/index.html`, (c) => inspect(c, '.content'))
   expect(text.split('\n')[0]).not.toContain('matches')
 })
+
+// A Tailwind selector (querySelector-invalid) must inspect end-to-end: resolveNode AND the
+// browser PROBE both fall back to the escaped form, so the box model and non-default styles
+// are populated, not silently dropped.
+test('inspects an element addressed by a Tailwind arbitrary-value selector', async () => {
+  const text = await withPage(`${srv.url}/tailwindish/index.html`, (c) => inspect(c, 'div.w-[calc(100%-2rem)].xs:w-72'))
+  expect(text).toContain('300x50 (border-box)')
+})
