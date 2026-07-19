@@ -377,8 +377,15 @@ function overlap(tree: BuiltTree, out: Violation[], ctx: Ctx): void {
 
 function tapTargets(tree: BuiltTree, out: Violation[], ctx: Ctx): void {
   const labels = buildLabelIndex(tree)
-  walk(tree.root, (n) => {
+  walk(tree.root, (n, parent) => {
     if (ctx.ignored(n) || !ctx.visible(n) || !INTERACTIVE.has(n.tag)) return
+    // WCAG 2.5.8 inline exception: a TEXT link inside a sentence is size-constrained by the
+    // surrounding line-height (24px is unreachable without reflowing the text), so it's exempt.
+    // Requires: it carries its own text (an icon-only link is NOT line-height-constrained — a
+    // 16px icon can grow to 24px without reflow — so it still flags), it's display:inline, and
+    // its parent has real text around it. Inputs are excluded — they route through the label
+    // path below (an appearance:none input can compute display:inline).
+    if (n.tag !== 'input' && n.text?.trim() && n.styles['display'] === 'inline' && parent?.text?.trim()) return
     // Field #2: an <input> with an associated <label> is measured by the LABEL's tap
     // target — the real control (Tailwind `peer` switches size a sr-only input at ~1px
     // and style the label as the visible control). A for= label is its own element,

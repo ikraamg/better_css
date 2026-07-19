@@ -96,3 +96,13 @@ test('tap-target: flags sub-24px interactive elements', async () => {
   expect(vs[0].selector).toBe('a')
   expect(vs[0].message).toContain('16x16')
 })
+
+// WCAG 2.5.8 inline exception: a link inside a sentence is size-constrained by the
+// surrounding line-height, so it's exempt; a small link standing alone still flags.
+test('tap-target: an inline link inside a sentence is exempt, a standalone one is not', async () => {
+  const vs = (await violationsFor('/tap-inline/index.html')).filter((v) => v.rule === 'tap-target')
+  expect(vs.some((v) => v.selector.includes('inline-link'))).toBe(false)
+  expect(vs.some((v) => v.selector.includes('standalone'))).toBe(true)
+  // an icon-only inline link (no own text) is not line-height-constrained — still flagged
+  expect(vs.some((v) => v.selector.includes('icon-link'))).toBe(true)
+})

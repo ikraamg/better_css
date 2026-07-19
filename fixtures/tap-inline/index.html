@@ -1,0 +1,15 @@
+<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><style>
+* { margin: 0; padding: 0; }
+body { font-size: 12px; line-height: 1.4; }
+</style></head><body>
+<!-- inline link inside a sentence: its height is constrained by the line-height of the
+     surrounding text, so WCAG 2.5.8's inline exception applies — not an authoring miss -->
+<p>Read the <a href="#" class="inline-link">docs</a> now for details.</p>
+<!-- a small link standing alone (no surrounding sentence text) is a genuine finding -->
+<div><a href="#" class="standalone" style="display:inline">x</a></div>
+<!-- an icon-only inline link next to text is NOT line-height-constrained (the 16px icon can
+     grow to 24px without reflowing the text) — it must still flag, so the exemption requires
+     the link to carry its OWN text, not just sit beside some -->
+<div>Follow us <a href="#" class="icon-link" style="display:inline"><svg width="16" height="16" viewBox="0 0 16 16"><rect width="16" height="16"/></svg></a></div>
+</body></html>
+
