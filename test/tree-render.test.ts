@@ -2,7 +2,7 @@ import { afterAll, expect, test } from 'vitest'
 import { serveFixtures } from './helpers/server.js'
 import { withPage, shutdownChrome } from '../src/core/connect.js'
 import { extract } from '../src/core/extract.js'
-import { buildTree, renderTree, selectorOf, walk, type LayoutNode } from '../src/core/tree.js'
+import { buildTree, renderTree, selectorOf, walk, findNode, type LayoutNode } from '../src/core/tree.js'
 
 const srv = await serveFixtures('fixtures')
 afterAll(async () => { srv.close(); await shutdownChrome() })
@@ -87,4 +87,27 @@ test('basic fixture renders byte-identical with and without the default budget',
   const withBudget = await withPage(`${srv.url}/basic/index.html`, async (c) =>
     renderTree(buildTree(await extract(c)), { budget: 400 }))
   expect(withBudget).toBe(withoutBudget)
+})
+
+// findNode scopes layout/inspect by selector. It must behave like a simple compound
+// selector (tag + #id + class SUBSET), matching the intuition inspect/explain already give —
+// not only the exact rendered selectorOf string.
+test('findNode: bare tag, class subset, and single class/#id/exact all resolve', async () => {
+  const tree = await withPage(`${srv.url}/findnode/index.html`, async (c) => buildTree(await extract(c)))
+  // bare tag, even when the element carries an id or classes (selectorOf would be header#top / nav.a.b.c)
+  expect(findNode(tree, 'header')?.tag).toBe('header')
+  expect(findNode(tree, 'nav')?.tag).toBe('nav')
+  // class subset of an element with more (and >3) classes — selectorOf truncates to .card.featured.wide
+  expect(findNode(tree, 'section.card.featured')?.classes).toContain('tall')
+  expect(findNode(tree, 'nav.a.b')?.tag).toBe('nav')
+  // unchanged behaviors: single class, #id, exact selectorOf
+  expect(findNode(tree, '.card')?.tag).toBe('section')
+  expect(findNode(tree, '#top')?.tag).toBe('header')
+  expect(findNode(tree, 'section.card.featured.wide')?.tag).toBe('section')
+  // dotted/#-bearing Tailwind arbitrary values can't be tokenized by the compound parser —
+  // they must still resolve via the raw-class fallback (regression guard)
+  expect(findNode(tree, '.gap-[0.5rem]')?.tag).toBe('div')
+  expect(findNode(tree, '.bg-[#fff]')?.tag).toBe('div')
+  // a genuinely absent selector still misses
+  expect(findNode(tree, 'article')).toBeUndefined()
 })
