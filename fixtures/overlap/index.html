@@ -29,6 +29,15 @@ header { height: 64px; background: #eee; }
 .grid-placeholder { display: grid; grid-template-columns: 160px; grid-template-rows: 60px; }
 .ph-content, .ph-empty { grid-row: 1; grid-column: 1; width: 160px; height: 60px; }
 .ph-content { background: honeydew; }
+/* descendant-escape (field NEXT-1): a static child that horizontally overflows its own
+   container laps whatever sits in the escaped strip. .escape-container is a flex item
+   pinned to 120px; .escaper (260px) spills 140px past it into .escape-cousin (the next
+   flex item, at x=120). parent-bleed already owns the real defect (escaper bleeds its
+   container); the cousin did nothing, so the cousin-overlap must be suppressed. */
+.escape-row { display: flex; align-items: flex-start; }
+.escape-container { flex: none; width: 120px; height: 80px; overflow: visible; background: #ddd; }
+.escaper { width: 260px; height: 60px; background: coral; }
+.escape-cousin { flex: none; width: 200px; height: 80px; background: lightblue; }
 </style></head><body>
 <header></header>
 <div class="oops"></div>
@@ -46,5 +55,9 @@ header { height: 64px; background: #eee; }
 <div class="grid-placeholder">
   <div class="ph-content">Loaded content</div>
   <div class="ph-empty"></div>
+</div>
+<div class="escape-row">
+  <div class="escape-container"><div class="escaper">child</div></div>
+  <div class="escape-cousin">cousin</div>
 </div>
 </body></html>

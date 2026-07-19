@@ -58,6 +58,19 @@ test('overlap: the placeholder guard does not suppress the genuine mutually-empt
   expect(vs.some((v) => v.selector === 'div.cell-b')).toBe(true)
 })
 
+// Field NEXT-1: a descendant that horizontally overflows its own container laps a cousin
+// sitting in the escaped strip. The cousin is innocent — parent-bleed already owns the real
+// defect (the escaper overflowing its box), so the cousin-overlap must be suppressed.
+test('overlap: a cousin lapped by a descendant that overflowed its container is not flagged', async () => {
+  const vs = (await violationsFor('/overlap/index.html')).filter((v) => v.rule === 'overlap')
+  expect(vs.some((v) => v.selector === 'div.escape-cousin')).toBe(false)
+})
+
+test('overlap: suppressing the cousin does not hide the real defect — the escaper still bleeds its container', async () => {
+  const vs = (await violationsFor('/overlap/index.html')).filter((v) => v.rule === 'parent-bleed')
+  expect(vs.some((v) => v.selector === 'div.escaper')).toBe(true)
+})
+
 test('tap-target: the svg element itself still participates — a tiny <a> wrapping an svg is still a candidate', async () => {
   const vs = (await violationsFor('/svg/index.html')).filter((v) => v.rule === 'tap-target')
   expect(vs.some((v) => v.selector === 'a')).toBe(true)
